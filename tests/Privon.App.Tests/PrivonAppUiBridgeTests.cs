@@ -31,7 +31,7 @@ public class PrivonAppUiBridgeTests
     public void CreateProduction_CompositionNeverStarted_Throws()
     {
         using var composition = new PrivonAppComposition(
-            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader());
+            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor());
 
         Assert.Throws<InvalidOperationException>(() => PrivonAppUiBridge.CreateProduction(composition));
     }

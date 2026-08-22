@@ -15,8 +15,17 @@ namespace Privon.App;
 /// reference MUST be owned by one object under one lock for the atomicity proof to hold; this
 /// interface split only narrows which OPERATIONS each caller sees, never splits the underlying
 /// state).
+///
+/// Phase 0.2D (STEP61) -- now also extends <see cref="IClipboardEvaluationLifecycle"/>, giving
+/// <see cref="ClipboardPrivacyCoordinator"/> the per-generation evaluation claim/report surface
+/// (Phase 0.2C, STEP58/STEP59) it needs to let a clipboard-content change and a foreground-focus
+/// change share one worker lane without ever evaluating the SAME clipboard generation twice --
+/// still never <see cref="IClipboardDecisionScopeLifecycle"/>'s own wider surface. Both
+/// <see cref="ClipboardDecisionScopeLifecycle"/> constructors/members already existed unchanged
+/// (Phase 0.2C) -- this widening requires no change to that concrete type at all; it already
+/// satisfies every member this wider interface now requires.
 /// </summary>
-internal interface IClipboardNotificationLifecycle
+internal interface IClipboardNotificationLifecycle : IClipboardEvaluationLifecycle
 {
     /// <summary>
     /// ADVANCE_OPERATION (Phase 3B STEP16.1, frozen): called exactly once per notification the

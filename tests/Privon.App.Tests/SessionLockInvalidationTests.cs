@@ -25,7 +25,7 @@ public class SessionLockInvalidationTests
     {
         var sessionLock = new FakeSessionLockNotification();
         var composition = new PrivonAppComposition(
-            CreateTempStorageRoot(), sessionLock, new ClipboardChangeMonitor(), new ComposerTextReader());
+            CreateTempStorageRoot(), sessionLock, new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor());
         composition.Start();
         return (composition, sessionLock);
     }
