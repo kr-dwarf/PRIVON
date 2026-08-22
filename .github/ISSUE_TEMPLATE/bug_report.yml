@@ -1,0 +1,148 @@
+name: Bug report
+description: Report a problem with PRIVON 0.1 beta.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## ⚠️ Before you continue
+
+        **DO NOT INCLUDE REAL PERSONAL INFORMATION.**
+        **USE SYNTHETIC / FAKE TEST DATA ONLY.**
+
+        실제 개인정보를 절대 포함하지 마세요. 반드시 가상의 예시 데이터만 사용해 주세요.
+
+        This includes (but is not limited to) real phone numbers, emails, resident
+        registration numbers, card numbers, bank accounts, passwords, API keys/tokens,
+        screenshots, or logs that contain real personal information. Use obviously fake
+        placeholder values instead (for example: `010-1234-5678`, `user@example.com`).
+
+        If you believe this report involves a security or privacy **vulnerability**
+        (not just a functional bug), please stop and use the private security reporting
+        process described in [SECURITY.md](../../SECURITY.md) instead of this public form.
+
+  - type: input
+    id: privon-version
+    attributes:
+      label: PRIVON version
+      description: The version you downloaded (e.g. 0.1.0-beta).
+      placeholder: "0.1.0-beta"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: e.g. Windows 11 24H2, Windows 10 22H2.
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: input
+    id: chatgpt-context
+    attributes:
+      label: ChatGPT environment/context
+      description: >
+        How were you using ChatGPT when this happened? (e.g. desktop app, browser +
+        which browser, a specific window/tab state). Do not include real conversation
+        content.
+      placeholder: "ChatGPT desktop app, single window"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear, concise description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Exact reproduction steps
+      description: >
+        Step-by-step, using synthetic/fake data only. Include the exact fake text you
+        copied to the clipboard if relevant.
+      placeholder: |
+        1. Copy the following text to the clipboard: "문의 전화 010-1234-5678"
+        2. Make sure ChatGPT is the active/foreground window
+        3. Wait a few seconds
+        4. Paste into ChatGPT
+        5. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      options:
+        - Always
+        - Intermittent
+        - Happened once
+    validations:
+      required: true
+
+  - type: dropdown
+    id: session-lock-involved
+    attributes:
+      label: Was Windows session lock or a restart involved?
+      description: Did this happen around a Windows lock (Win+L), unlock, sign-out, or restart?
+      options:
+        - "No"
+        - "Yes — session lock (Win+L) was involved"
+        - "Yes — a restart/reboot was involved"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: prompt-appeared
+    attributes:
+      label: Did a PRIVON confirmation prompt appear?
+      description: Did PRIVON show a "Protect All" confirmation window around the time of this issue?
+      options:
+        - "No"
+        - "Yes"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional information (optional)
+      description: >
+        Sanitized screenshots or log excerpts are welcome **if they contain no real
+        personal information**. Do not attach a raw PRIVON diagnostic log unless a
+        maintainer has specifically asked for one — see SECURITY.md for why.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: >
+            I used synthetic/fake data and did not include real personal information or
+            secrets anywhere in this report (text, screenshots, or logs).
+          required: true

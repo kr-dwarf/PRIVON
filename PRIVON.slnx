@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Privon.App/Privon.App.csproj" />
+    <Project Path="src/Privon.Core/Privon.Core.csproj" />
+    <Project Path="src/Privon.Detection/Privon.Detection.csproj" />
+    <Project Path="src/Privon.Storage/Privon.Storage.csproj" />
+    <Project Path="src/Privon.Windows/Privon.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Privon.App.Tests/Privon.App.Tests.csproj" />
+    <Project Path="tests/Privon.Core.Tests/Privon.Core.Tests.csproj" />
+    <Project Path="tests/Privon.Detection.Tests/Privon.Detection.Tests.csproj" />
+    <Project Path="tests/Privon.Storage.Tests/Privon.Storage.Tests.csproj" />
+    <Project Path="tests/Privon.Windows.IntegrationTests/Privon.Windows.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

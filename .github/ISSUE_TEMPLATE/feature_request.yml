@@ -1,0 +1,61 @@
+name: Feature request
+description: Suggest an idea or improvement for PRIVON.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest something. Please describe the **problem**
+        first, before jumping to a specific solution — it helps maintainers evaluate fit.
+
+        Please do not include real personal information anywhere in this report; use
+        synthetic/fake examples only.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What problem are you trying to solve? What's the situation that prompted this idea?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-behavior
+    attributes:
+      label: Proposed behavior
+      description: What would you like PRIVON to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-privon
+    attributes:
+      label: Why this belongs in PRIVON
+      description: >
+        Why should this live in PRIVON specifically, rather than elsewhere? How does it
+        fit PRIVON's current scope (Windows, ChatGPT, clipboard-first, local processing)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: privacy-security-implications
+    attributes:
+      label: Privacy/security implications
+      description: >
+        Does this idea touch detection, protection policy, clipboard handling, storage,
+        or anything that could affect PRIVON's fail-closed guarantees? Please describe
+        any implications you're aware of, even if you're unsure.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acknowledgement
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: >
+            I understand that filing a feature request does not imply approval for
+            implementation, and does not imply approval to open a pull request for it.
+            See CONTRIBUTING.md — code changes require prior maintainer discussion.
+          required: true

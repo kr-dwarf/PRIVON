@@ -1,0 +1,23 @@
+# Issue template chooser configuration.
+#
+# blank_issues_enabled: false forces reporters through the structured bug/feature
+# forms instead of opening a free-form blank Issue. This also helps keep security
+# reports out of public Issues (see below).
+blank_issues_enabled: false
+
+# Intentionally no `contact_links` entry is defined here yet.
+#
+# We do not invent a GitHub repository URL before this repository has actually been
+# published. Once a repository contains a SECURITY.md file (this repo already does),
+# GitHub automatically shows a "Report a security vulnerability" link on the new-issue
+# chooser page that points to the repository's Security tab / private reporting flow —
+# no manual `contact_links` entry is required for that.
+#
+# If, after publication, a maintainer wants an additional explicit contact_links entry
+# (e.g. linking directly to SECURITY.md), add one here using the real, now-known
+# repository URL — for example:
+#
+# contact_links:
+#   - name: Report a security or privacy vulnerability
+#     url: https://github.com/<owner>/<repo>/security/policy
+#     about: Do not report vulnerabilities via a public Issue. See SECURITY.md.

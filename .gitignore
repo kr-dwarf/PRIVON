@@ -1,0 +1,65 @@
+# =============================================================================
+# PRIVON .gitignore
+# Conservative: only ignore generated build/release output, local machine
+# state, and local user data. Legitimate repository content (src/, tests/,
+# docs/, tools/, server/) is never ignored here.
+# =============================================================================
+
+# --- .NET build output ------------------------------------------------------
+bin/
+obj/
+*.user
+*.userosscache
+*.sln.docstates
+
+# --- dotnet test results -----------------------------------------------------
+TestResults/
+*.trx
+
+# --- Publish / release packaging output --------------------------------------
+# tools/publish-release.ps1 stages and packages everything under release/.
+# Nothing under here should ever be committed.
+publish/
+release/
+
+# --- PRIVON diagnostic logs ---------------------------------------------------
+# Metadata-only diagnostic log, opt-in via PRIVON_ENABLE_DIAGNOSTICS=1.
+# Never contains raw PII, but is local machine/session state and must not be
+# committed regardless.
+privon-diagnostic-*.log
+
+# --- PRIVON local user data ----------------------------------------------------
+# Production storage lives under %LocalAppData%\PRIVON, not the repo. These
+# patterns exist only as a safety net in case a local run/test ever writes
+# encrypted local state into the working tree.
+master.key
+settings.bin
+trusted-public-info.bin
+exceptions.bin
+
+# --- Editor / IDE local state --------------------------------------------------
+.vs/
+.vscode/
+.idea/
+*.suo
+.obsidian/
+
+# --- Claude Code local (machine-specific) settings ------------------------------
+# .claude/settings.json (shared, if present) IS tracked; only the local
+# per-machine override is ignored.
+.claude/settings.local.json
+
+# --- OS junk -------------------------------------------------------------------
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- Internal engineering log (publication-scope decision, not a secret) -------
+# CLAUDE.md is a large, highly granular internal development/workflow log. It has
+# been privacy/secret-audited clean, but the product owner has decided it should
+# not enter the public GitHub history -- public engineering documentation is
+# instead represented by README.md/README.ko.md, docs/, CONTRIBUTING.md, and
+# SECURITY.md. Root-only rule so other Markdown files (docs/, README variants,
+# CONTRIBUTING.md, SECURITY.md) are never affected. The local file is kept for
+# continued development use and is not deleted.
+/CLAUDE.md

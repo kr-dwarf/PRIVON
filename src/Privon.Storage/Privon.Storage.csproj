@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Justification (per project dependency policy):
+         Why: DPAPI (CryptProtectData/CryptUnprotectData) must protect the local master key
+         per audit contract section 6. Built-in alternative: hand-written P/Invoke of
+         CryptProtectData/CryptUnprotectData with manual DATA_BLOB marshaling. Security:
+         this is Microsoft's own first-party package (dotnet/runtime), safer than
+         hand-rolled unsafe marshaling of a security-critical primitive. App size: single
+         small assembly, DPAPI wrapper only, no transitive dependencies. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Privon.Core\Privon.Core.csproj" />
+  </ItemGroup>
+
+</Project>

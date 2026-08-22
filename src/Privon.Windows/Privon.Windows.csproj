@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Phase 3C STEP29: required to resolve System.Windows.Automation (UIAutomationClient /
+         UIAutomationTypes) for the production composer reader. Does not add any PRIVON project
+         reference (Windows to none is unaffected) and does not change OutputType (this remains
+         a class library). -->
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>
