@@ -2847,4 +2847,240 @@ public class ClipboardPrivacyCoordinatorTests
         foregroundTrigger.ThrowOnStop = false;
         coordinator.Stop(); // must succeed cleanly -- proves mailbox Complete() was not re-attempted
     }
+
+    // ------------------------------------------------------------
+    // J. CROSS-APP TARGET TRANSITION (Phase 0.2F)
+    // ------------------------------------------------------------
+    //
+    // The literal Phase 0.2 product scenario: the user copies sensitive content while a DIFFERENT
+    // app is foreground (unauthorized -> PRIVON never claims/evaluates that generation at all --
+    // see CROSS_TRIGGER_SINGLE_EVALUATION), then switches TO ChatGPT -- the foreground-trigger
+    // callback fires, the target is now authorized, and the SAME still-open generation (a fresh
+    // IClipboardGenerationSnapshot.CurrentGeneration read, per SHARED_TRIGGER_INTAKE) is claimed
+    // and evaluated for the first time. These tests exist to lock this exact end-to-end path down
+    // as a permanent regression -- none of the Section C/D tests above ever start from an
+    // unauthorized clipboard-changed item.
+
+    [Fact]
+    public async Task TargetTransition_UnauthorizedClipboardChange_ThenForegroundToAuthorizedTarget_EvaluatesSameGeneration()
+    {
+        var (coordinator, transport, targetCapture, processor, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 1111, ProcessName: "notepad");
+
+        transport.RaiseChanged(TextNotification); // generation 1, unauthorized -> no claim ever taken
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 1);
+        await Task.Delay(50);
+
+        Assert.Equal(1, lifecycle.CurrentGeneration);
+        Assert.Equal(0, processor.CallCount);
+
+        // The user switches to ChatGPT -- the STILL-OPEN generation 1 (nothing re-copied it) is now
+        // claimed via a fresh CurrentGeneration read and evaluated for the first time.
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
+        foregroundTrigger.Raise();
+        await WaitUntilAsync(() => processor.CallCount >= 1);
+
+        Assert.Equal(1, processor.CallCount);
+        Assert.Equal(1, lifecycle.CurrentGeneration); // still generation 1 -- foreground never advances it
+        coordinator.Stop();
+    }
+
+    [Fact]
+    public async Task TargetTransition_MultipleUnauthorizedClipboardChanges_ThenAuthorizedForeground_EvaluatesLatestGenerationOnly()
+    {
+        var (coordinator, transport, targetCapture, processor, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 1111, ProcessName: "notepad");
+
+        transport.RaiseChanged(new ClipboardChangeNotification(1, true, true));
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 1);
+        transport.RaiseChanged(new ClipboardChangeNotification(2, true, true));
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 2);
+        await Task.Delay(50);
+
+        Assert.Equal(2, lifecycle.CurrentGeneration);
+        Assert.Equal(0, processor.CallCount); // neither unauthorized copy was ever evaluated
+
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
+        foregroundTrigger.Raise();
+        await WaitUntilAsync(() => processor.CallCount >= 1);
+
+        Assert.Equal(1, processor.CallCount);
+        Assert.Equal(2, lifecycle.CurrentGeneration); // evaluated the LATEST generation, never the first
+        coordinator.Stop();
+    }
+
+    [Fact]
+    public async Task TargetTransition_ProtectedContentNeverWrittenUntilTargetBecomesAuthorized()
+    {
+        var transport = new FakeClipboardReadTransport();
+        var targetCapture = new FakeForegroundTargetCapture();
+        var processor = new FakeClipboardPrivacyProcessor { WritePlanToReturn = new ClipboardWritePlan("[전화번호1]") };
+        var writeTransport = new FakeClipboardWriteTransport { NextResult = ClipboardWriteResult.Success(resultSequence: 7) };
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var publisher = new ClipboardDecisionSessionPublisher(lifecycle);
+        var operationGate = new ClipboardOperationGate();
+        var verificationHandoff = new FakeClipboardComposerVerificationHandoff();
+        var verificationInvalidation = new FakeClipboardComposerVerificationInvalidation();
+        var foregroundTrigger = new FakeClipboardForegroundTrigger();
+        var coordinator = new ClipboardPrivacyCoordinator(
+            transport, targetCapture, processor, writeTransport, lifecycle, publisher,
+            operationGate, verificationHandoff, verificationInvalidation,
+            foregroundTrigger: foregroundTrigger);
+        coordinator.Start();
+
+        // The user copies sensitive content while a DIFFERENT app is foreground -- the clipboard
+        // must never be touched.
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 1111, ProcessName: "notepad");
+        transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot(sequence: 7));
+        transport.RaiseChanged(TextNotification);
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 1);
+        await Task.Delay(50);
+
+        Assert.Equal(0, processor.CallCount);
+        Assert.Equal(0, writeTransport.CallCount);
+
+        // The user switches to ChatGPT -- the SAME still-open generation's sensitive content is now
+        // protected exactly once.
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        foregroundTrigger.Raise();
+        await WaitUntilAsync(() => writeTransport.CallCount >= 1);
+
+        Assert.Equal(1, processor.CallCount);
+        Assert.Equal(1, writeTransport.CallCount);
+        coordinator.Stop();
+    }
+
+    // ------------------------------------------------------------
+    // K. SESSION-LOCK-STYLE SUPERSEDE (Phase 0.2F)
+    // ------------------------------------------------------------
+    //
+    // PrivonAppComposition.OnSessionLocked's entire effect on the shared lifecycle is exactly one
+    // call -- lifecycle.Reset() (see that type's own SESSION_LOCK_CALLBACK doc) -- which is
+    // mechanically identical to AdvanceOnClipboardNotification for every property these tests care
+    // about (Phase 3B STEP16.1's own MODEL A proof already covers this for the pre-existing
+    // active-scope/generation state; Phase 0.2C added a FOURTH piece of state -- _evaluationState --
+    // to that SAME atomic reset, but no test before this STEP ever exercised Reset() while a
+    // cross-trigger evaluation claim was genuinely InProgress). Simulated directly against the real
+    // ClipboardDecisionScopeLifecycle -- SessionLockInvalidationTests.cs separately already proves
+    // the real ISessionLockNotification -> OnSessionLocked -> lifecycle.Reset() wiring itself.
+
+    [Fact]
+    public async Task SessionLockReset_DuringInFlightForegroundEvaluation_StaleReportIsNoOp_NewGenerationEvaluatesCleanly()
+    {
+        var (coordinator, transport, targetCapture, processor, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        transport.HoldReadsUntilReleased = true;
+
+        // A foreground-triggered attempt claims generation 0 and is now InProgress, mid-read.
+        foregroundTrigger.Raise();
+        await WaitUntilAsync(() => transport.PendingHeldReadCount == 1);
+
+        // Session-lock-style interruption -- generation advances to 1, _evaluationState resets to
+        // NotEvaluated, all in the same atomic critical section as the pre-existing scope drop.
+        lifecycle.Reset();
+        Assert.Equal(1, lifecycle.CurrentGeneration);
+
+        // The already-in-flight read for the now-superseded generation 0 cannot be cancelled and
+        // still completes -- its own eventual CompleteEvaluation(0) report is stale (current
+        // generation is 1) and is silently absorbed, never disturbing generation 1's own,
+        // not-yet-started evaluation state.
+        transport.ReleaseNextRead(ClipboardTextReadResult.Success(SuccessSnapshot()));
+        await WaitUntilAsync(() => processor.CallCount >= 1);
+        Assert.Equal(1, processor.CallCount);
+
+        // A brand-new clipboard change now arrives -- generation 2 -- and is evaluated completely
+        // normally, proving the claim/report machinery survived the interruption uncorrupted.
+        transport.HoldReadsUntilReleased = false;
+        transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
+        transport.RaiseChanged(new ClipboardChangeNotification(1, true, true));
+        await WaitUntilAsync(() => processor.CallCount >= 2);
+
+        Assert.Equal(2, processor.CallCount);
+        Assert.Equal(2, lifecycle.CurrentGeneration);
+        coordinator.Stop();
+    }
+
+    [Fact]
+    public async Task SessionLockReset_WhileOperationGateHeldByInFlightForegroundAttempt_NeverBlocks()
+    {
+        var (coordinator, transport, targetCapture, _, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        transport.HoldReadsUntilReleased = true;
+
+        // A foreground-triggered attempt is InProgress, holding the operation gate for the entire
+        // duration of its (deliberately held-open) read.
+        foregroundTrigger.Raise();
+        await WaitUntilAsync(() => transport.PendingHeldReadCount == 1);
+
+        // lifecycle.Reset() must complete immediately -- it only ever touches the lifecycle's own
+        // tiny synchronous _gate, never IClipboardOperationGate -- exactly the same
+        // CALLBACK_LOCK_ACCEPTABILITY / LOCK_ORDER guarantee already proven for a clipboard-
+        // triggered attempt, now proven for a foreground-triggered one.
+        var generationBefore = lifecycle.CurrentGeneration;
+        lifecycle.Reset();
+
+        Assert.True(lifecycle.CurrentGeneration > generationBefore);
+
+        transport.ReleaseNextRead(ClipboardTextReadResult.Success(SuccessSnapshot()));
+        await Task.Delay(50);
+        coordinator.Stop();
+    }
+
+    // ------------------------------------------------------------
+    // L. STALE PROMPT / CROSS-APP INVALIDATION (Phase 0.2F)
+    // ------------------------------------------------------------
+    //
+    // A NeedsDecision decision scope (the future Runtime Decision UI's prompt) published while
+    // ChatGPT is genuinely foreground must never remain actionable once the user copies NEW
+    // content elsewhere -- even though that new copy's target is unauthorized (and so is never
+    // itself evaluated), OnClipboardChanged's own unconditional
+    // AdvanceOnClipboardNotification/InvalidatePending calls (BEFORE the target/TargetGate check
+    // even runs) already invalidate it. This proves that pre-existing v0.1 guarantee still holds
+    // for the new cross-app path this Phase adds, end-to-end through a real
+    // ClipboardDecisionScopeLifecycle/ClipboardDecisionSessionPublisher.
+
+    [Fact]
+    public async Task CrossApp_UnauthorizedClipboardChangeElsewhere_InvalidatesPreviouslyPublishedDecisionScope()
+    {
+        var (coordinator, transport, targetCapture, processor, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
+
+        // A NeedsDecision prompt gets published while ChatGPT is genuinely foreground.
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
+        processor.DecisionPlanToReturn = SampleDecisionPlan();
+
+        transport.RaiseChanged(TextNotification);
+        await WaitUntilAsync(() => processor.CallCount >= 1);
+        await Task.Delay(50);
+
+        var staleScope = lifecycle.GetActiveScope();
+        Assert.NotNull(staleScope);
+        Assert.True(lifecycle.IsActive(staleScope!));
+
+        // The user alt-tabs to Notepad and copies NEW sensitive content -- unauthorized (never
+        // itself evaluated), but the mere fact the clipboard changed at all must still immediately
+        // invalidate the previously-published prompt.
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "notepad");
+        var captureCountBefore = targetCapture.CaptureCallCount;
+        transport.RaiseChanged(new ClipboardChangeNotification(2, true, true));
+
+        Assert.False(lifecycle.IsActive(staleScope!), "a stale NeedsDecision prompt must be blocked from acting on old data.");
+        Assert.Null(lifecycle.GetActiveScope());
+
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount > captureCountBefore);
+        await Task.Delay(50);
+        Assert.Equal(1, processor.CallCount); // the unauthorized copy is never itself evaluated
+
+        // The user switches back to ChatGPT -- the LATEST (post-Notepad) generation is claimed and
+        // evaluated cleanly, never the stale generation the old prompt belonged to.
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        processor.DecisionPlanToReturn = null;
+        foregroundTrigger.Raise();
+        await WaitUntilAsync(() => processor.CallCount >= 2);
+
+        Assert.Equal(2, processor.CallCount);
+        coordinator.Stop();
+    }
 }
