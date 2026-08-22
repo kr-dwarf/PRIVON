@@ -1,7 +1,5 @@
 [English](./README.md) | [한국어](./README.ko.md)
 
-<!-- FIRST_PUBLIC_RELEASE_DATE: set at first GitHub publication -->
-
 ---
 
 # PRIVON
@@ -246,6 +244,18 @@ the `tools/publish-release.ps1` script:
 
 This verification reflects results within the tested scope and conditions — it does not
 mean "works perfectly in every environment."
+
+---
+
+## Release provenance
+
+<!-- FIRST_PUBLIC_RELEASE_TIMESTAMP: 2026-08-22T18:24:41+09:00 -->
+
+- First public source: August 22, 2026
+- First public beta release: August 22, 2026 — `v0.1.0-beta`
+- First public source commit: `98a5c2d`
+- `v0.1.0-beta` tagged commit: `1380d44`
+- Release ZIP SHA-256: `d1417848847f5f2140bbf619662973ef69c86dff65ecd45607db8acf7699281f`
 
 ---
 

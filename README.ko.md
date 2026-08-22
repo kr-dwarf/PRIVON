@@ -216,6 +216,16 @@ dotnet publish src/Privon.App/Privon.App.csproj `
 
 ---
 
+## 공개 기록
+
+- 최초 소스 공개: 2026년 8월 22일
+- 최초 공개 베타 Release: 2026년 8월 22일 — `v0.1.0-beta`
+- 최초 공개 소스 commit: `98a5c2d`
+- `v0.1.0-beta` tag 대상 commit: `1380d44`
+- 배포 ZIP SHA-256: `d1417848847f5f2140bbf619662973ef69c86dff65ecd45607db8acf7699281f`
+
+---
+
 ## 라이선스
 
 PRIVON 소스 코드는 GitHub에서 공개적으로 열람할 수 있으며, **PolyForm Shield 1.0.0**
