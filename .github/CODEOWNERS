@@ -1,0 +1,16 @@
+# PRIVON repository ownership
+* @kr-dwarf
+
+# Security/privacy-sensitive implementation
+/src/Privon.Core/ @kr-dwarf
+/src/Privon.Detection/ @kr-dwarf
+/src/Privon.Storage/ @kr-dwarf
+/src/Privon.Windows/ @kr-dwarf
+/src/Privon.App/ @kr-dwarf
+
+# Tests and governance
+/tests/ @kr-dwarf
+/.github/ @kr-dwarf
+/CONTRIBUTING.md @kr-dwarf
+/SECURITY.md @kr-dwarf
+/LICENSE @kr-dwarf
