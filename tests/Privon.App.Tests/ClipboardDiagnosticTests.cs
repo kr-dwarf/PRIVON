@@ -417,7 +417,16 @@ public class ClipboardDiagnosticTests
         // The functional call chain still completes normally even though EVERY Diagnose() call
         // throws internally -- this is the real, observable behavior a sink failure must never
         // alter (SINK_FAILURE_ISOLATION).
-        await WaitUntilAsync(() => writeTransport.CallCount >= 1);
+        //
+        // POLL_ON_LAST_PIPELINE_STEP (Stabilization Gate, post-Phase-0.2E): waits on
+        // verificationHandoff.CallCount -- the LAST fake call this attempt makes (write ->
+        // classify verified -> composer-verification handoff publish) -- never writeTransport's
+        // own (earlier) CallCount. Polling an earlier step and then immediately asserting a LATER
+        // step's result is exactly the ordering hazard ClipboardTestDoubleOrderingHazardTests
+        // proves deterministically: the coordinator's worker thread can be preempted between
+        // WriteTextIfSequenceMatchesAsync returning and the subsequent verificationHandoff.Publish
+        // call actually running.
+        await WaitUntilAsync(() => verificationHandoff.CallCount >= 1);
         Assert.Equal(1, writeTransport.CallCount);
         Assert.Equal(1, verificationHandoff.CallCount);
         Assert.Empty(diagnostics.Events); // every Record() call threw before appending anything
@@ -478,7 +487,10 @@ public class ClipboardDiagnosticTests
         writeTransport.NextResult = ClipboardWriteResult.Success(7);
 
         transport.RaiseChanged(TextNotification);
-        await WaitUntilAsync(() => writeTransport.CallCount >= 1);
+        // POLL_ON_LAST_PIPELINE_STEP (Stabilization Gate, post-Phase-0.2E): see
+        // ThrowingDiagnosticRecorder_NeverAffectsCoordinatorFunctionalOutcome's identical comment --
+        // waits on the LAST fake call this attempt makes, never an earlier step's CallCount.
+        await WaitUntilAsync(() => verificationHandoff.CallCount >= 1);
 
         Assert.Equal(1, writeTransport.CallCount);
         Assert.Equal(1, verificationHandoff.CallCount);

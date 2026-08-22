@@ -35,9 +35,13 @@ internal sealed class FakeClipboardPrivacyProcessor : IClipboardPrivacyProcessor
 
     public ClipboardPrivacyProcessingOutcome Process(ForegroundTargetSnapshot expectedTarget, ClipboardTextSnapshot snapshot)
     {
-        CallCount++;
+        // ORDERING_HAZARD (Stabilization Gate, post-Phase-0.2E): CallCount is written LAST -- see
+        // FakeClipboardWriteTransport's identical comment / ClipboardTestDoubleOrderingHazardTests
+        // for the deterministic proof of why this ordering matters for a background-worker-driven
+        // fake a test polls via WaitUntilAsync.
         ReceivedExpectedTargets.Add(expectedTarget);
         ReceivedSnapshots.Add(snapshot);
+        CallCount++;
 
         if (ThrowOnProcess is { } ex)
             throw ex;

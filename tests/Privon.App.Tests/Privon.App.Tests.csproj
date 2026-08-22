@@ -22,4 +22,24 @@
     <ProjectReference Include="..\..\src\Privon.App\Privon.App.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      Stabilization Gate residual fix (see StabilizationGateRootCauseTests.cs for the two prior
+      root causes). This project is the only one in the solution whose test classes routinely
+      start real background workers (ClipboardPrivacyCoordinator's Task.Run worker loop,
+      ClipboardChangeMonitor/ComposerTextReader/SessionLockMonitor/ForegroundChangeMonitor owner
+      threads, WPF Dispatcher pump threads, diagnostic recorder writer channels) and then assert on
+      a bounded (5s) shutdown/completion wait. xUnit's default collection level parallelism
+      (max threads = Environment.ProcessorCount) races most of this project's classes against
+      each other for CPU time on constrained (e.g. 4 core) machines, which can starve those
+      background workers past their bounded wait budget. This was reproduced deterministically as
+      this project's own internal parallelism alone, with no other test project running
+      concurrently. Serializing test collections within this project only (not solution wide, not
+      touching any production timeout policy) removes that contention. Core, Storage, Detection
+      and Windows.IntegrationTests remain unaffected and keep their default parallelism, since they
+      showed no flake in any repro run.
+    -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

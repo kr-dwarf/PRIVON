@@ -21,10 +21,16 @@ internal sealed class FakeClipboardDecisionSessionPublisher : IClipboardDecision
 
     public bool TryPublish(long expectedGeneration, string currentRawText, ClipboardDecisionPlan decisionPlan)
     {
-        CallCount++;
+        // ORDERING_HAZARD (Stabilization Gate, post-Phase-0.2E): CallCount is written LAST -- see
+        // FakeClipboardWriteTransport's identical comment / ClipboardTestDoubleOrderingHazardTests
+        // for why. This is the exact fake DecisionPlanPresent_ForwardsExactDecisionPlanReference
+        // hit: `WaitUntilAsync(() => publisher.CallCount >= 1)` followed immediately by
+        // `publisher.ReceivedDecisionPlans[0]` used to be able to observe CallCount == 1 with
+        // ReceivedDecisionPlans still empty.
         ReceivedExpectedGenerations.Add(expectedGeneration);
         ReceivedRawTexts.Add(currentRawText);
         ReceivedDecisionPlans.Add(decisionPlan);
+        CallCount++;
 
         if (ThrowOnPublish is { } ex)
             throw ex;
