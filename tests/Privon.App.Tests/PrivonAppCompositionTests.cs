@@ -23,7 +23,7 @@ public class PrivonAppCompositionTests
         Path.Combine(Path.GetTempPath(), "PrivonAppCompositionTests", Guid.NewGuid().ToString("N"));
 
     private static PrivonAppComposition CreateWithRealGraph(string? storageRoot = null) =>
-        new(storageRoot ?? CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader());
+        new(storageRoot ?? CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor());
 
     private static object? GetField(object obj, string name)
     {
@@ -144,6 +144,30 @@ public class PrivonAppCompositionTests
         Assert.Same(GetField(coordinator, "_targetCapture"), GetField(resolver, "_targetCapture"));
     }
 
+    // ---- Phase 0.2E (Production Composition Wiring): the coordinator's own optional
+    // IClipboardForegroundTrigger dependency is backed by the SAME ForegroundChangeMonitor instance
+    // this composition directly owns (via the ClipboardForegroundTrigger adapter constructed once in
+    // BuildGraph) -- never a second, independently-constructed ForegroundChangeMonitor. The resolver
+    // deliberately does NOT receive this trigger at all (see this type's own OBJECT_GRAPH doc) -- its
+    // own entry point is always an explicit ResolveAsync call, never trigger-driven. ----
+    [Fact]
+    public void SharedForegroundChangeMonitor_BacksCoordinatorForegroundTrigger()
+    {
+        using var composition = CreateWithRealGraph();
+        composition.Start();
+
+        var foregroundMonitor = GetField(composition, "_foregroundChangeMonitor")!;
+        var coordinator = GetField(composition, "_coordinator")!;
+        var resolver = composition.Resolver!;
+
+        var foregroundTrigger = GetField(coordinator, "_foregroundTrigger")!;
+        Assert.Same(foregroundMonitor, GetField(foregroundTrigger, "_monitor"));
+
+        // The resolver never receives IClipboardForegroundTrigger at all -- it has no such field.
+        Assert.Null(resolver.GetType().GetField("_foregroundTrigger",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public));
+    }
+
     // ---- Phase 3C STEP38 (item 30): exactly one production session-lock notification instance
     // exists per composition, held directly (never rebuilt/duplicated). The REAL Locked-callback
     // EFFECT (that it targets the same lifecycle/verifier instances everything else shares) is
@@ -154,7 +178,7 @@ public class PrivonAppCompositionTests
     {
         var sessionLockNotification = new SessionLockNotificationAdapter();
         using var composition = new PrivonAppComposition(
-            CreateTempStorageRoot(), sessionLockNotification, new ClipboardChangeMonitor(), new ComposerTextReader());
+            CreateTempStorageRoot(), sessionLockNotification, new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor());
         composition.Start();
 
         Assert.Same(sessionLockNotification, GetField(composition, "_sessionLockNotification"));
@@ -185,7 +209,7 @@ public class PrivonAppCompositionTests
         try
         {
             var monitor = new ClipboardChangeMonitor();
-            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader);
+            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader, new ForegroundChangeMonitor());
 
             Assert.Throws<InvalidOperationException>(composition.Start);
 
@@ -245,6 +269,22 @@ public class PrivonAppCompositionTests
         Assert.Throws<InvalidOperationException>(sessionLockNotification.Start);
     }
 
+    // ---- Phase 0.2E: the foreground monitor really was started by composition.Start() -- via the
+    // coordinator's own internal Start() (never by this type directly, see START_ORDER doc) -- proven
+    // the same way as the clipboard monitor/composer reader/session observer above: a second Start()
+    // now throws the single-use "already been called" InvalidOperationException, not
+    // ObjectDisposedException. ----
+    [Fact]
+    public void Start_CoordinatorStartsForegroundChangeMonitor_ProvenBySecondStartThrowingAlreadyStarted()
+    {
+        using var composition = CreateWithRealGraph();
+        composition.Start();
+
+        var foregroundMonitor = (ForegroundChangeMonitor)GetField(composition, "_foregroundChangeMonitor")!;
+
+        Assert.Throws<InvalidOperationException>(foregroundMonitor.Start);
+    }
+
     // ---- Phase 3C STEP38 (items 31/33): if the session observer itself fails to start, that
     // failure is reached and reported BEFORE the composer reader or coordinator are ever touched --
     // the composer reader's own manual Start() after rollback still succeeds (proving it was never
@@ -262,7 +302,7 @@ public class PrivonAppCompositionTests
         {
             var sessionLockNotification = new SessionLockNotificationAdapter(preStartedSessionMonitor);
             using var composition = new PrivonAppComposition(
-                CreateTempStorageRoot(), sessionLockNotification, new ClipboardChangeMonitor(), new ComposerTextReader());
+                CreateTempStorageRoot(), sessionLockNotification, new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor());
 
             var thrown = Assert.Throws<InvalidOperationException>(composition.Start);
             Assert.Contains("SessionLockMonitor", thrown.Message);
@@ -285,7 +325,7 @@ public class PrivonAppCompositionTests
         try
         {
             var composerReader = new ComposerTextReader();
-            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), preStartedMonitor, composerReader);
+            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), preStartedMonitor, composerReader, new ForegroundChangeMonitor());
 
             Assert.Throws<InvalidOperationException>(composition.Start);
 
@@ -317,7 +357,7 @@ public class PrivonAppCompositionTests
         try
         {
             var monitor = new ClipboardChangeMonitor();
-            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader);
+            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader, new ForegroundChangeMonitor());
 
             Assert.Throws<InvalidOperationException>(composition.Start);
             // Second Start() after a failed first Start() is still rejected as single-use -- never a
@@ -370,7 +410,7 @@ public class PrivonAppCompositionTests
         try
         {
             var monitor = new ClipboardChangeMonitor();
-            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader);
+            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader, new ForegroundChangeMonitor());
 
             var thrown = Assert.Throws<InvalidOperationException>(composition.Start);
             Assert.NotNull(thrown);
@@ -397,7 +437,7 @@ public class PrivonAppCompositionTests
         try
         {
             var composerReader = new ComposerTextReader();
-            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), preStartedMonitor, composerReader);
+            using var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), preStartedMonitor, composerReader, new ForegroundChangeMonitor());
 
             Assert.Throws<InvalidOperationException>(composition.Start);
 
@@ -414,6 +454,41 @@ public class PrivonAppCompositionTests
         }
     }
 
+    // ---- Phase 0.2E: an already-started ForegroundChangeMonitor makes the coordinator's OWN
+    // Start() fail (its clipboard transport starts fine first -- proving _clipboardTransportOwned
+    // becomes true and gets rolled back too -- then IClipboardForegroundTrigger.Start() throws) --
+    // this composition's own RollbackPartialStartup then independently disposes the raw
+    // ForegroundChangeMonitor field it directly owns, exactly mirroring how it already disposes
+    // _monitor regardless of which layer actually called Start on it (see this type's own
+    // STARTUP_FAILURE_ROLLBACK doc). ----
+    [Fact]
+    public void Start_ForegroundMonitorAlreadyStarted_CoordinatorStartFails_RollsBackForegroundMonitor()
+    {
+        var preStartedForegroundMonitor = new ForegroundChangeMonitor();
+        preStartedForegroundMonitor.Start();
+        try
+        {
+            using var composition = new PrivonAppComposition(
+                CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), preStartedForegroundMonitor);
+
+            var thrown = Assert.Throws<InvalidOperationException>(composition.Start);
+            Assert.Contains("ForegroundChangeMonitor", thrown.Message);
+
+            Assert.Null(composition.Resolver);
+            Assert.Null(composition.Verifier);
+            Assert.Null(GetField(composition, "_coordinator"));
+
+            // Rollback reached and disposed this instance directly -- a manual Start() now throws
+            // ObjectDisposedException (never "already started," which would instead mean rollback
+            // never actually reached it).
+            Assert.Throws<ObjectDisposedException>(preStartedForegroundMonitor.Start);
+        }
+        finally
+        {
+            preStartedForegroundMonitor.Dispose();
+        }
+    }
+
     [Fact]
     public void Dispose_SafeAfterFailedStart()
     {
@@ -422,7 +497,7 @@ public class PrivonAppCompositionTests
         try
         {
             var monitor = new ClipboardChangeMonitor();
-            var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader);
+            var composition = new PrivonAppComposition(CreateTempStorageRoot(), new SessionLockNotificationAdapter(), monitor, preStartedReader, new ForegroundChangeMonitor());
 
             Assert.Throws<InvalidOperationException>(composition.Start);
 
@@ -533,6 +608,25 @@ public class PrivonAppCompositionTests
         // succeeds, never silently no-ops), proving Dispose() actually reached and stopped each one.
         Assert.Throws<ObjectDisposedException>(monitor.Start);
         Assert.Throws<ObjectDisposedException>(reader.Start);
+    }
+
+    // ---- Phase 0.2E: the foreground monitor is stopped/disposed by composition.Dispose() too --
+    // reached both indirectly (the coordinator's own Dispose() stops whichever source(s) it owns,
+    // including the foreground trigger) AND directly (this type's own SHUTDOWN_ORDER always disposes
+    // the raw ForegroundChangeMonitor field afterward, which is always safe since Stop is
+    // idempotent-on-already-stopped) -- proven the same way as the clipboard monitor/composer reader
+    // above: a fresh Start() call now throws ObjectDisposedException. ----
+    [Fact]
+    public void Dispose_StopsForegroundChangeMonitor()
+    {
+        var composition = CreateWithRealGraph();
+        composition.Start();
+
+        var foregroundMonitor = (ForegroundChangeMonitor)GetField(composition, "_foregroundChangeMonitor")!;
+
+        composition.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(foregroundMonitor.Start);
     }
 
     // ---- Phase 3C STEP38 (item 32): the session observer is stopped by composition.Dispose() too --
@@ -693,8 +787,20 @@ public class PrivonAppCompositionTests
     // a real environment variable, which would be unsafe global state under parallel test
     // execution.
 
+    // SHARED_TEMP_GLOB_COLLISION fix (Stabilization Gate, post-Phase-0.2E): the naive
+    // "privon-diagnostic-*.log" glob also matches FileClipboardDiagnosticRecorderTests's own
+    // fixture naming ("privon-diagnostic-test-{guid}.log") -- since xUnit runs different test
+    // classes in parallel by default and both write/delete real files under the SAME shared
+    // %TEMP% directory, a before/after snapshot pair here could observe an unrelated fixture file
+    // from that other class appear or disappear in between, entirely independent of this
+    // composition root. Excluding the "-test-" infix keeps the real production
+    // FileClipboardDiagnosticRecorder.CreateDefaultFilePath() shape ("privon-diagnostic-
+    // {yyyyMMdd-HHmmss}.log", no such infix) fully matched while excluding that other class's
+    // fixtures -- see DiagnosticLogGlobCollisionTests for the deterministic proof.
     private static string[] SnapshotDiagnosticLogFiles() =>
-        Directory.GetFiles(Path.GetTempPath(), "privon-diagnostic-*.log");
+        Directory.GetFiles(Path.GetTempPath(), "privon-diagnostic-*.log")
+            .Where(p => !Path.GetFileName(p).Contains("-test-", StringComparison.Ordinal))
+            .ToArray();
 
     // ---- item C bullet 1: default production composition does not create/open a file diagnostic
     // recorder -- proven two ways: (a) black-box, by diffing the real %TEMP% directory's actual
@@ -749,7 +855,7 @@ public class PrivonAppCompositionTests
         string[] createdFiles;
 
         using (var composition = new PrivonAppComposition(
-            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), enableDiagnostics: true))
+            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor(), enableDiagnostics: true))
         {
             composition.Start();
 
@@ -777,7 +883,7 @@ public class PrivonAppCompositionTests
         disabled.Start();
 
         using var enabled = new PrivonAppComposition(
-            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), enableDiagnostics: true);
+            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor(), enableDiagnostics: true);
         enabled.Start();
 
         Assert.NotNull(disabled.Resolver);
@@ -813,7 +919,7 @@ public class PrivonAppCompositionTests
     public void ExplicitDiagnosticsEnabled_StartThenDispose_SucceedsWithoutThrowing()
     {
         using var composition = new PrivonAppComposition(
-            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), enableDiagnostics: true);
+            CreateTempStorageRoot(), new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor(), enableDiagnostics: true);
 
         composition.Start();
         composition.Dispose();

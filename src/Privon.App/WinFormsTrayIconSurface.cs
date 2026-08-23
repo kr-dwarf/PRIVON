@@ -30,20 +30,36 @@ namespace Privon.App;
 /// <see cref="Icon"/> uses <see cref="SystemIcons.Application"/> -- no custom <c>.ico</c> resource
 /// is embedded for 0.1, keeping packaging minimal; swapping in a branded icon later does not
 /// change this type's contract.
+///
+/// Phase 0.2I adds exactly one more menu item -- a checkable "Windows 시작 시 자동 실행" toggle,
+/// placed above a separator from the pre-existing Exit item -- and nothing else; still no
+/// dashboard, no settings window.
 /// </summary>
 internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
 {
     private readonly NotifyIcon _icon;
     private readonly ContextMenuStrip _menu;
+    private readonly ToolStripMenuItem _autoStartItem;
     private readonly ToolStripMenuItem _exitItem;
     private bool _disposed;
 
     public WinFormsTrayIconSurface()
     {
+        // CheckOnClick is deliberately false -- the coordinator, not this menu item itself, decides
+        // the final checked state AFTER a real enable/disable attempt actually succeeds or fails
+        // (see ITrayIconSurface.SetAutoStartChecked's own doc). If CheckOnClick were true, WinForms
+        // would flip the visual checkbox the instant the user clicks, before any registry attempt
+        // ever ran -- exactly the "표시가 거짓으로 성공을 주장" failure mode the 0.2I contract
+        // forbids.
+        _autoStartItem = new ToolStripMenuItem("Windows 시작 시 자동 실행") { CheckOnClick = false };
+        _autoStartItem.Click += (_, _) => AutoStartToggleRequested?.Invoke(this, EventArgs.Empty);
+
         _exitItem = new ToolStripMenuItem("Exit");
         _exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
         _menu = new ContextMenuStrip();
+        _menu.Items.Add(_autoStartItem);
+        _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(_exitItem);
 
         _icon = new NotifyIcon
@@ -56,11 +72,18 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
     }
 
     public event EventHandler? ExitRequested;
+    public event EventHandler? AutoStartToggleRequested;
 
     public void Show()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _icon.Visible = true;
+    }
+
+    public void SetAutoStartChecked(bool isChecked)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _autoStartItem.Checked = isChecked;
     }
 
     /// <summary>Deterministic disposal -- sets <c>Visible = false</c> BEFORE disposing so the icon
@@ -75,6 +98,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _icon.Visible = false;
         _icon.Dispose();
         _menu.Dispose();
+        _autoStartItem.Dispose();
         _exitItem.Dispose();
     }
 }

@@ -194,6 +194,14 @@ public class DecisionPromptCoordinatorTests
         Assert.True(surface.IsClosed);
     }
 
+    // SILENT_FAILURE_FIX (Phase 0.2G release-blocker fix): Stale used to close the surface with
+    // NO feedback at all -- indistinguishable, from the user's point of view, from a genuine
+    // committed success. This is exactly the misleading behavior a real live cross-app manual QA
+    // observation surfaced (LEVEL3_PROTECT_SELF_STALE_ROOT_CAUSE): the popup "just disappeared"
+    // after the user clicked "모두 보호," with the raw PII left completely unprotected on the
+    // clipboard. Stale now falls through to the SAME neutral-failure-message path every other
+    // non-committing outcome already used -- see AssertNonSuccessShowsNeutralFailure below, which
+    // is now exercised by StaleOutcome_ShowsNeutralFailureOnly_NeverSuccessClaim too.
     [Fact]
     public async Task StaleOnFirstItem_StopsImmediately()
     {
@@ -208,8 +216,8 @@ public class DecisionPromptCoordinatorTests
         await Task.Yield();
 
         Assert.Single(h.Resolver.Calls);
-        Assert.True(surface.IsClosed);
-        Assert.Null(surface.LastNeutralFailureMessage);
+        Assert.False(surface.IsClosed);
+        Assert.Equal(DecisionPromptCoordinator.NeutralFailureMessage, surface.LastNeutralFailureMessage);
     }
 
     [Fact]
@@ -227,7 +235,8 @@ public class DecisionPromptCoordinatorTests
         await Task.Yield();
 
         Assert.Equal(2, h.Resolver.Calls.Count); // never a third call for a hypothetical Item3
-        Assert.True(surface.IsClosed);
+        Assert.False(surface.IsClosed);
+        Assert.Equal(DecisionPromptCoordinator.NeutralFailureMessage, surface.LastNeutralFailureMessage);
     }
 
     // Four separate [Fact]s rather than a [Theory]/[MemberData] -- ClipboardDecisionActionResult
@@ -247,6 +256,10 @@ public class DecisionPromptCoordinatorTests
         Assert.Equal(DecisionPromptCoordinator.NeutralFailureMessage, surface.LastNeutralFailureMessage);
         Assert.False(surface.IsClosed);
     }
+
+    [Fact]
+    public Task StaleOutcome_ShowsNeutralFailureOnly_NeverSuccessClaim() =>
+        AssertNonSuccessShowsNeutralFailure(ClipboardDecisionActionResult.Stale());
 
     [Fact]
     public Task WriteFailedOutcome_ShowsNeutralFailureOnly_NeverSuccessClaim() =>

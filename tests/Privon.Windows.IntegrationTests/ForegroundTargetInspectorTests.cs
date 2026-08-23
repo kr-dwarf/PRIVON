@@ -234,6 +234,33 @@ public class ForegroundTargetInspectorTests
         Assert.Throws<ArgumentNullException>(() => new ForegroundTargetInspector(null!));
     }
 
+    // ---- Phase 0.2H NON_AI_INTERFERENCE_GATE -- structural proof that target identification can
+    // never read a window title or URL (which would be needed to ever conflate a browser tab
+    // showing chatgpt.com with the real ChatGPT Windows Desktop process): the ONLY native calls
+    // Win32ForegroundTargetSource's P/Invoke surface declares are exactly the two documented in
+    // that type's own class doc (GetForegroundWindow, GetWindowThreadProcessId) plus the BCL
+    // Process.ProcessName lookup already exercised above -- no GetWindowText/window-text/caption/
+    // URL-reading API of any kind exists anywhere in this capability. This locks the class doc's
+    // own claim down as a permanent regression rather than a one-time source read.
+    [Fact]
+    public void Win32Source_NativeMethods_DeclaresOnlyForegroundWindowAndThreadProcessId()
+    {
+        var nativeMethodsType = typeof(Win32ForegroundTargetSource).GetNestedType("NativeMethods", System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(nativeMethodsType);
+
+        var declaredMethodNames = nativeMethodsType!
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly)
+            .Select(m => m.Name)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(new[] { "GetForegroundWindow", "GetWindowThreadProcessId" }, declaredMethodNames);
+
+        var forbidden = new[] { "WindowText", "GetWindowText", "Caption", "Title", "Url", "InternetGetConnectedState" };
+        Assert.DoesNotContain(declaredMethodNames, name => forbidden.Any(f => name.Contains(f, StringComparison.OrdinalIgnoreCase)));
+    }
+
     // ---- 9 (real Windows structural smoke, section 9 of the STEP2 instruction): actual
     // GetForegroundWindow + GetWindowThreadProcessId + process-name lookup against whatever is
     // currently foreground in this environment. Asserts only coherent mechanical behavior --

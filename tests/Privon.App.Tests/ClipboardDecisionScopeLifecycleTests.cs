@@ -400,9 +400,340 @@ public class ClipboardDecisionScopeLifecycleTests
     [InlineData(typeof(ClipboardDecisionScopeLifecycle))]
     [InlineData(typeof(ClipboardDispatchItem))]
     [InlineData(typeof(IClipboardGenerationSnapshot))]
+    [InlineData(typeof(ClipboardEvaluationState))]
     public void LifecycleTypes_AreNotPublic(Type type)
     {
         Assert.False(type.IsPublic);
+    }
+
+    // ==================================================================
+    // PHASE 0.2C -- PER-GENERATION EVALUATION STATE (STEP58 contract, STEP59 implementation)
+    //
+    // TryBeginEvaluation/CompleteEvaluation/AbandonEvaluation are pure state-primitive tests only
+    // -- no ForegroundChangeMonitor, no ClipboardPrivacyCoordinator, no outcome-to-transition
+    // wiring exists anywhere yet (Phase 0.2D). Every test below drives the three new methods
+    // directly against the real ClipboardDecisionScopeLifecycle, exactly mirroring this file's
+    // existing no-fakes-needed style (the type has no native dependency of any kind).
+    //
+    // STEP58's original pseudocode allowed CompleteEvaluation/AbandonEvaluation to transition
+    // based on generation-match ALONE -- STEP59's frozen correction additionally requires
+    // _evaluationState == InProgress at the moment of the call, so a malformed/double/stale call
+    // (no prior claim, or a claim that already resolved one way or the other) is always a no-op
+    // rather than silently mutating a terminal or unclaimed generation. Tests 16-21 below exist
+    // specifically because that InProgress precondition was missing from the original pseudocode.
+    // ==================================================================
+
+    // ---- 1/2. fresh generation can be claimed == first TryBegin succeeds (the same fact stated
+    // twice in the instruction's numbered list -- one test, not a duplicate, per this codebase's
+    // own established no-redundant-test convention) ----
+    [Fact]
+    public void TryBeginEvaluation_FreshGeneration_Succeeds()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+
+        Assert.True(lifecycle.TryBeginEvaluation(lifecycle.CurrentGeneration));
+    }
+
+    // ---- 3. second TryBegin for same generation fails while InProgress ----
+    [Fact]
+    public void TryBeginEvaluation_SecondCallSameGenerationWhileInProgress_Fails()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+
+        Assert.False(lifecycle.TryBeginEvaluation(generation));
+    }
+
+    // ---- 4. Complete closes generation terminally ----
+    // ---- 5. terminal generation cannot be claimed again ----
+    [Fact]
+    public void CompleteEvaluation_AfterClaim_ClosesGenerationTerminally_CannotBeReclaimed()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+
+        lifecycle.CompleteEvaluation(generation);
+
+        Assert.False(lifecycle.TryBeginEvaluation(generation));
+    }
+
+    // ---- 6. Abandon makes the SAME current generation retryable ----
+    [Fact]
+    public void AbandonEvaluation_AfterClaim_MakesSameGenerationRetryable()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+
+        lifecycle.AbandonEvaluation(generation);
+
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+    }
+
+    // ---- 7. clipboard advance resets evaluation state for the new generation ----
+    [Fact]
+    public void AdvanceOnClipboardNotification_ResetsEvaluationStateForNewGeneration()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var g1 = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(g1));
+        lifecycle.CompleteEvaluation(g1); // g1 now terminally Evaluated
+
+        var g2 = lifecycle.AdvanceOnClipboardNotification();
+
+        Assert.True(lifecycle.TryBeginEvaluation(g2)); // fresh generation, freely claimable
+    }
+
+    // ---- 8. old-generation Complete after advance is no-op ----
+    [Fact]
+    public void CompleteEvaluation_OldGenerationAfterAdvance_IsNoOp()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var g1 = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(g1));
+
+        var g2 = lifecycle.AdvanceOnClipboardNotification();
+        lifecycle.CompleteEvaluation(g1); // late, stale -- must not touch g2's state
+
+        Assert.True(lifecycle.TryBeginEvaluation(g2)); // g2 still freely claimable
+    }
+
+    // ---- 9. old-generation Abandon after advance is no-op ----
+    [Fact]
+    public void AbandonEvaluation_OldGenerationAfterAdvance_IsNoOp()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var g1 = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(g1));
+
+        var g2 = lifecycle.AdvanceOnClipboardNotification();
+        Assert.True(lifecycle.TryBeginEvaluation(g2)); // g2 claimed
+        lifecycle.AbandonEvaluation(g1); // late, stale -- must not touch g2's InProgress claim
+
+        Assert.False(lifecycle.TryBeginEvaluation(g2)); // g2's own claim is untouched, still InProgress
+    }
+
+    // ---- 10. Reset advances generation and clears evaluation state ----
+    [Fact]
+    public void Reset_AdvancesGenerationAndClearsEvaluationState()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var g1 = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(g1));
+        lifecycle.CompleteEvaluation(g1);
+
+        lifecycle.Reset();
+
+        var g2 = lifecycle.CurrentGeneration;
+        Assert.True(g2 > g1);
+        Assert.True(lifecycle.TryBeginEvaluation(g2));
+        // The pre-Reset claim can never resurface against the new generation either.
+        Assert.False(lifecycle.TryBeginEvaluation(g1));
+    }
+
+    // ---- 11. concurrent TryBegin calls produce exactly one winner -- genuine cross-thread
+    // concurrency via a Barrier (never timing-dependent), matching this file's own established
+    // ConcurrentAdvanceAndPublish_NeverProducesStaleActiveScope/ConcurrentPublishAndAdvance_
+    // RepeatedTrials_NeverStaleActive precedent shape. ----
+    [Fact]
+    public async Task ConcurrentTryBeginEvaluation_ExactlyOneWinner()
+    {
+        const int trials = 200;
+        const int callers = 8;
+
+        for (int i = 0; i < trials; i++)
+        {
+            var lifecycle = new ClipboardDecisionScopeLifecycle();
+            var generation = lifecycle.CurrentGeneration;
+            var barrier = new Barrier(callers);
+            var results = new bool[callers];
+
+            var tasks = new Task[callers];
+            for (int c = 0; c < callers; c++)
+            {
+                int index = c;
+                tasks[c] = Task.Run(() =>
+                {
+                    barrier.SignalAndWait();
+                    results[index] = lifecycle.TryBeginEvaluation(generation);
+                });
+            }
+
+            await Task.WhenAll(tasks);
+
+            Assert.Equal(1, results.Count(r => r));
+        }
+    }
+
+    // ---- 12. "NeedsDecision"-equivalent terminal Complete remains closed -- domain-named per the
+    // instruction's own phrasing; mechanically identical to test 4/5 (this state layer has no
+    // concept of NeedsDecision/Protect/Bypass at all -- those distinctions belong entirely to
+    // Phase 0.2D's future outcome-to-transition mapping). ----
+    [Fact]
+    public void CompleteEvaluation_NeedsDecisionEquivalentOutcome_RemainsTerminallyClosed()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+
+        lifecycle.CompleteEvaluation(generation); // simulates "NeedsDecision published"
+
+        Assert.False(lifecycle.TryBeginEvaluation(generation)); // no duplicate re-evaluation
+    }
+
+    // ---- 13. supersede after terminal leaves the new generation fresh -- domain-named, mechanically
+    // identical to test 8 (a superseded NeedsDecision-equivalent generation behaves exactly like any
+    // other superseded terminal generation at this layer). ----
+    [Fact]
+    public void Supersede_AfterNeedsDecisionEquivalentTerminal_LeavesNewGenerationFresh()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var g1 = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(g1));
+        lifecycle.CompleteEvaluation(g1); // simulates "NeedsDecision published" for g1
+
+        var g2 = lifecycle.AdvanceOnClipboardNotification(); // g1 superseded
+
+        Assert.True(lifecycle.TryBeginEvaluation(g2));
+    }
+
+    // ---- 14. Complete does not change CurrentGeneration -- directly encodes the STEP42.1 self-write
+    // generation-stability invariant: a successfully verified protected self-write must never itself
+    // advance/reopen the generation. ----
+    [Fact]
+    public void CompleteEvaluation_DoesNotChangeCurrentGeneration()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+
+        lifecycle.CompleteEvaluation(generation);
+
+        Assert.Equal(generation, lifecycle.CurrentGeneration);
+    }
+
+    // ---- 15. Abandon does not change CurrentGeneration ----
+    [Fact]
+    public void AbandonEvaluation_DoesNotChangeCurrentGeneration()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+
+        lifecycle.AbandonEvaluation(generation);
+
+        Assert.Equal(generation, lifecycle.CurrentGeneration);
+    }
+
+    // ==================================================================
+    // MANDATORY INVALID-TRANSITION TESTS (16-21) -- required because STEP58's original pseudocode
+    // lacked the InProgress precondition on Complete/Abandon.
+    // ==================================================================
+
+    // ---- 16. Complete without prior TryBegin is a no-op ----
+    [Fact]
+    public void CompleteEvaluation_WithoutPriorTryBegin_IsNoOp()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+
+        lifecycle.CompleteEvaluation(generation); // never claimed -- must not fabricate Evaluated
+
+        // If the no-op guard were missing, this generation would now be wrongly "Evaluated" and
+        // TryBeginEvaluation would incorrectly fail.
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+    }
+
+    // ---- 17. Abandon without prior TryBegin is a no-op ----
+    [Fact]
+    public void AbandonEvaluation_WithoutPriorTryBegin_IsNoOp()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+
+        lifecycle.AbandonEvaluation(generation); // never claimed -- no state to release
+
+        // A subsequent genuine claim must still behave exactly as if Abandon had never been called.
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+        Assert.False(lifecycle.TryBeginEvaluation(generation)); // now InProgress, second claim fails
+    }
+
+    // ---- 18. Complete called twice does not change terminal state (second call is a no-op because
+    // the state is Evaluated, not InProgress, by the time it runs) ----
+    [Fact]
+    public void CompleteEvaluation_CalledTwice_DoesNotChangeTerminalState()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+        lifecycle.CompleteEvaluation(generation);
+
+        lifecycle.CompleteEvaluation(generation); // second call -- no-op, state already Evaluated
+
+        Assert.False(lifecycle.TryBeginEvaluation(generation)); // still terminally closed
+    }
+
+    // ---- 19. Abandon after Complete MUST NOT reopen Evaluated ----
+    [Fact]
+    public void AbandonEvaluation_AfterComplete_DoesNotReopenEvaluated()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+        lifecycle.CompleteEvaluation(generation); // Evaluated, not InProgress
+
+        lifecycle.AbandonEvaluation(generation); // must be a no-op -- state is Evaluated, not InProgress
+
+        Assert.False(lifecycle.TryBeginEvaluation(generation)); // still terminally closed, not reopened
+    }
+
+    // ---- 20. Complete after Abandon MUST NOT close the generation unless a NEW TryBegin succeeded
+    // in between ----
+    [Fact]
+    public void CompleteEvaluation_AfterAbandon_DoesNotCloseGeneration_UnlessNewTryBeginSucceeded()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var generation = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(generation));
+        lifecycle.AbandonEvaluation(generation); // back to NotEvaluated
+
+        // Without an intervening TryBeginEvaluation, Complete must be a no-op (state is
+        // NotEvaluated, not InProgress).
+        lifecycle.CompleteEvaluation(generation);
+        Assert.True(lifecycle.TryBeginEvaluation(generation)); // still freely claimable -> was a no-op
+
+        // Now WITH an intervening successful claim, Complete legitimately closes it.
+        lifecycle.CompleteEvaluation(generation);
+        Assert.False(lifecycle.TryBeginEvaluation(generation)); // now genuinely terminally closed
+    }
+
+    // ---- 21. stale old-generation terminal calls cannot affect the CURRENT generation's own
+    // active claim -- a stronger assertion than tests 8/9 in isolation: proves a stale call
+    // targeting a superseded generation cannot corrupt a claim that is ACTIVELY in progress for the
+    // new, current generation (not merely that the new generation "still exists unclaimed"). ----
+    [Fact]
+    public void StaleOldGenerationTerminalCalls_CannotAffectCurrentGenerationsActiveClaim()
+    {
+        var lifecycle = new ClipboardDecisionScopeLifecycle();
+        var g1 = lifecycle.CurrentGeneration;
+        Assert.True(lifecycle.TryBeginEvaluation(g1));
+
+        var g2 = lifecycle.AdvanceOnClipboardNotification(); // g1 superseded
+        Assert.True(lifecycle.TryBeginEvaluation(g2)); // g2 is now actively InProgress
+
+        // Stale calls for the dead g1 must not touch g2's live InProgress claim in either direction.
+        lifecycle.CompleteEvaluation(g1);
+        lifecycle.AbandonEvaluation(g1);
+
+        // If either stale call had leaked through, g2 would now be wrongly Evaluated (a second
+        // TryBegin would fail for the wrong reason) or wrongly reset to NotEvaluated (a second
+        // TryBegin would wrongly succeed). Neither may happen -- g2 must still be exactly
+        // InProgress, provable only by CompleteEvaluation(g2) now legitimately succeeding in
+        // closing it.
+        lifecycle.CompleteEvaluation(g2);
+        Assert.False(lifecycle.TryBeginEvaluation(g2));
     }
 
     // ---- Phase 3C STEP32: ClipboardDecisionScopeLifecycle also implements the narrow

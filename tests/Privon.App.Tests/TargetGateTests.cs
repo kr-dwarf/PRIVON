@@ -34,6 +34,28 @@ public class TargetGateTests
         Assert.False(TargetGate.IsSupportedTarget(snapshot));
     }
 
+    // ---- 4b. Phase 0.2H NON_AI_INTERFERENCE_GATE -- explicit browser process names, literally
+    // covering the "ChatGPT Web in a browser must never be authorized as ChatGPT Desktop"
+    // requirement. IsSupportedTarget only ever compares snapshot.ProcessName (the OS-reported
+    // executable short name -- see Win32ForegroundTargetSource, which never reads a window title
+    // or URL) against the literal "ChatGPT" -- a browser's ProcessName is "chrome"/"msedge"/
+    // "firefox" regardless of which tab/URL (including chatgpt.com) is open, so this is a
+    // structural impossibility, not merely an untested one. Explorer/a terminal are included for
+    // the same completeness the 0.2H instruction's misidentification audit asked for.
+    [Theory]
+    [InlineData("chrome")]
+    [InlineData("msedge")]
+    [InlineData("firefox")]
+    [InlineData("explorer")]
+    [InlineData("WindowsTerminal")]
+    [InlineData("cmd")]
+    [InlineData("powershell")]
+    public void IsSupportedTarget_NonAiApplications_ReturnsFalse(string processName)
+    {
+        var snapshot = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: processName);
+        Assert.False(TargetGate.IsSupportedTarget(snapshot));
+    }
+
     // ---- 5. unresolved -> false, even with a matching name ----
     [Fact]
     public void IsSupportedTarget_Unresolved_ReturnsFalse()

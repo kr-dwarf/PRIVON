@@ -22,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0-beta",
+    [string]$Version,
     [string]$Rid = "win-x64"
 )
 
@@ -45,6 +45,20 @@ function Fail {
     Write-Host ""
     Write-Host "FAILED: $Message" -ForegroundColor Red
     exit 1
+}
+
+# ---------------------------------------------------------------------------
+# 0. Explicit version required. There is no default -- a previous stale
+#    default ("0.1.0-beta") let a 0.2 build be silently packaged and labeled
+#    as the old 0.1 release. Replacing that default with a new hardcoded
+#    value (e.g. "0.2.0-beta") would only move the identical problem to the
+#    next release, so this parameter has no default at all: every invocation
+#    must explicitly state the version it is packaging. This check runs
+#    before any path resolution or filesystem work.
+# ---------------------------------------------------------------------------
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    Fail "Explicit -Version is required (e.g. -Version `"0.2.0-beta`"). There is no default -- this prevents a release artifact from ever being silently mislabeled with a stale version string."
 }
 
 # ---------------------------------------------------------------------------
@@ -72,6 +86,51 @@ Write-Info "Project   : $AppProject"
 Write-Info "Version   : $Version"
 Write-Info "RID       : $Rid"
 Write-Info "Release   : $ReleaseDir"
+
+# ---------------------------------------------------------------------------
+# 0b. Resolve the exact Git HEAD this invocation is packaging. Captured once,
+#     up front, and used later (0c, and again after publish) as the single
+#     source of provenance truth for this run -- never re-read or re-derived.
+# ---------------------------------------------------------------------------
+
+Write-Step "Resolving Git HEAD"
+
+$capturedHeadRaw = (& git -C $RepoRoot rev-parse HEAD 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    Fail "Unable to resolve Git HEAD via 'git rev-parse HEAD' in $RepoRoot. Ensure this script is run inside a valid Git working tree."
+}
+
+$CapturedHead = $capturedHeadRaw.Trim()
+if ($CapturedHead -notmatch '^[0-9a-f]{40}$') {
+    Fail "Resolved Git HEAD does not look like a full 40-character SHA: '$CapturedHead'"
+}
+
+Write-Info "Captured HEAD: $CapturedHead"
+
+# ---------------------------------------------------------------------------
+# 0c. Refuse to package from a dirty working tree. `release/` is already
+#     gitignored, so its own generated content never appears in `git status`
+#     output -- no path is special-cased here. Fails closed: never auto-
+#     stashes, auto-resets, or otherwise mutates repository/user state.
+# ---------------------------------------------------------------------------
+
+Write-Step "Verifying clean working tree"
+
+$gitStatus = (& git -C $RepoRoot status --porcelain 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    Fail "Unable to run 'git status --porcelain' in $RepoRoot. Ensure this script is run inside a valid Git working tree."
+}
+
+if ($gitStatus) {
+    Write-Host ""
+    Write-Host "Working tree is not clean:" -ForegroundColor Red
+    foreach ($line in $gitStatus) {
+        Write-Host "  $line" -ForegroundColor Red
+    }
+    Fail "Refusing to package a release artifact from a dirty working tree. Commit, stash, or discard local changes first."
+}
+
+Write-Info "Working tree is clean."
 
 # ---------------------------------------------------------------------------
 # 1. Clean only this script's own release staging/output directory.
@@ -125,6 +184,45 @@ foreach ($f in ($stagedFiles | Sort-Object Name)) {
     $relPath = $f.FullName.Substring($StagingDir.Length + 1)
     Write-Info ("  - {0}  ({1:N0} bytes)" -f $relPath, $f.Length)
 }
+
+# ---------------------------------------------------------------------------
+# 3b. Verify the executable THIS invocation just published actually embeds
+#     the exact Git HEAD captured in step 0b -- using only the .NET SDK's
+#     existing, zero-configuration InformationalVersion/ProductVersion
+#     source-revision embedding (no new provenance mechanism, no manifest,
+#     no network call). This is checked on $publishedExe (the freshly
+#     produced Privon.App.exe, before the rename below) so there is no
+#     ambiguity about which file is being verified -- it cannot be an old
+#     staging leftover, since step 1 unconditionally wiped and step 2
+#     unconditionally re-published this exact directory moments ago. No
+#     timestamp, filename, or file-existence check is treated as sufficient
+#     provenance -- only the embedded revision string itself. A failure here
+#     aborts before the forbidden-artifact scan, the rename, the ZIP, and the
+#     checksum -- no package success can ever be reported past this point.
+# ---------------------------------------------------------------------------
+
+Write-Step "Verifying embedded Git HEAD provenance"
+
+$publishedVersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($publishedExe)
+$embeddedProductVersion = $publishedVersionInfo.ProductVersion
+
+if ([string]::IsNullOrWhiteSpace($embeddedProductVersion)) {
+    Fail "Published executable has no ProductVersion metadata -- cannot verify release provenance: $publishedExe"
+}
+
+Write-Info "Embedded ProductVersion: $embeddedProductVersion"
+
+if ($embeddedProductVersion -notlike "*$CapturedHead*") {
+    Fail (
+        "Release artifact provenance check FAILED. Expected the published executable's " +
+        "ProductVersion to contain the exact Git HEAD captured at the start of this " +
+        "invocation ($CapturedHead), but it did not (ProductVersion: '$embeddedProductVersion'). " +
+        "Refusing to package -- a release artifact must never ship without exact source " +
+        "provenance."
+    )
+}
+
+Write-Info "Provenance verified: embedded ProductVersion contains expected HEAD ($CapturedHead)."
 
 # ---------------------------------------------------------------------------
 # 4. Reject unexpected/forbidden artifacts BEFORE renaming/zipping.

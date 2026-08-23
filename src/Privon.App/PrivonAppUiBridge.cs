@@ -13,19 +13,33 @@ namespace Privon.App;
 /// completely intact -- this type, not <see cref="PrivonAppComposition"/>, is what actually
 /// touches <see cref="System.Windows.Forms.NotifyIcon"/>/WPF <see cref="System.Windows.Threading.Dispatcher"/>.
 ///
-/// Owns exactly two things: a <see cref="DecisionPromptCoordinator"/> (the NeedsDecision Protect
-/// UI) and an <see cref="ITrayIconSurface"/> (running presence + Exit). <see cref="CreateProduction"/>
-/// is the ONLY production construction path -- it requires all six dependencies explicitly (no
-/// optional-parameter defaults), so a test can never accidentally construct a real
-/// <see cref="WinFormsTrayIconSurface"/>/<see cref="WpfDispatcherScheduler"/>/<see cref="DecisionPromptWindow"/>
-/// merely by calling the ordinary constructor -- every dependency must be supplied explicitly,
-/// production or fake alike.
+/// Owns exactly three things: a <see cref="DecisionPromptCoordinator"/> (the NeedsDecision Protect
+/// UI), an <see cref="ITrayIconSurface"/> (running presence + Exit + Phase 0.2I's auto-start
+/// toggle), and (Phase 0.2I) a <see cref="WindowsAutoStartCoordinator"/> -- the auto-start POLICY
+/// object the tray's toggle click is bound against. <see cref="CreateProduction"/> is the ONLY
+/// production construction path -- it requires every dependency explicitly (no optional-parameter
+/// defaults), so a test can never accidentally construct a real
+/// <see cref="WinFormsTrayIconSurface"/>/<see cref="WpfDispatcherScheduler"/>/<see cref="DecisionPromptWindow"/>/
+/// <see cref="WindowsAutoStartRegistration"/> merely by calling the ordinary constructor -- every
+/// dependency must be supplied explicitly, production or fake alike.
+///
+/// AUTO_START_UI_BINDING (Phase 0.2I): <see cref="Start"/> queries the CURRENT actual registration
+/// state via <see cref="WindowsAutoStartCoordinator.IsEnabled"/> (a read-only registry lookup) and
+/// reflects it on the tray immediately -- never assumes "OFF" by default without actually checking.
+/// The toggle click handler always re-derives "enable or disable" from a FRESH
+/// <see cref="WindowsAutoStartCoordinator.IsEnabled"/> read (never from the menu item's own visual
+/// state, which this type never reads back), attempts exactly the one corresponding operation, and
+/// then reflects the tray's checked state from a SECOND fresh <see cref="WindowsAutoStartCoordinator.IsEnabled"/>
+/// read taken AFTER that attempt -- so a failed enable/disable (whatever the underlying reason)
+/// always renders whatever the registry actually ends up containing, never a state this type merely
+/// hoped for.
 /// </summary>
 internal sealed class PrivonAppUiBridge : IDisposable
 {
     private readonly DecisionPromptCoordinator _promptCoordinator;
     private readonly ITrayIconSurface _traySurface;
     private readonly IDispatcherScheduler _scheduler;
+    private readonly WindowsAutoStartCoordinator _autoStartCoordinator;
     private readonly object _gate = new();
 
     private bool _started;
@@ -37,7 +51,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
         IClipboardDecisionResolver resolver,
         IDispatcherScheduler scheduler,
         ITrayIconSurface traySurface,
-        Func<IDecisionPromptSurface> promptSurfaceFactory)
+        Func<IDecisionPromptSurface> promptSurfaceFactory,
+        WindowsAutoStartCoordinator autoStartCoordinator)
     {
         ArgumentNullException.ThrowIfNull(sessionPublisher);
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -45,19 +60,21 @@ internal sealed class PrivonAppUiBridge : IDisposable
         ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(traySurface);
         ArgumentNullException.ThrowIfNull(promptSurfaceFactory);
+        ArgumentNullException.ThrowIfNull(autoStartCoordinator);
 
         _scheduler = scheduler;
         _traySurface = traySurface;
+        _autoStartCoordinator = autoStartCoordinator;
         _promptCoordinator = new DecisionPromptCoordinator(sessionPublisher, lifecycle, resolver, scheduler, promptSurfaceFactory);
     }
 
     /// <summary>The only production construction path -- wires the real
     /// <see cref="WpfDispatcherScheduler"/>/<see cref="WinFormsTrayIconSurface"/>/
-    /// <see cref="DecisionPromptWindow"/> against <paramref name="composition"/>'s already-started
-    /// shared objects. <paramref name="composition"/> must have already completed a successful
-    /// <see cref="PrivonAppComposition.Start"/> -- <see cref="PrivonAppComposition.SessionPublisher"/>/
-    /// <see cref="PrivonAppComposition.Lifecycle"/>/<see cref="PrivonAppComposition.Resolver"/>
-    /// are only non-null once it has.</summary>
+    /// <see cref="DecisionPromptWindow"/>/<see cref="WindowsAutoStartCoordinator"/> against
+    /// <paramref name="composition"/>'s already-started shared objects. <paramref name="composition"/>
+    /// must have already completed a successful <see cref="PrivonAppComposition.Start"/> --
+    /// <see cref="PrivonAppComposition.SessionPublisher"/>/<see cref="PrivonAppComposition.Lifecycle"/>/
+    /// <see cref="PrivonAppComposition.Resolver"/> are only non-null once it has.</summary>
     public static PrivonAppUiBridge CreateProduction(PrivonAppComposition composition)
     {
         ArgumentNullException.ThrowIfNull(composition);
@@ -75,7 +92,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
             resolver,
             new WpfDispatcherScheduler(),
             new WinFormsTrayIconSurface(),
-            () => new DecisionPromptWindow());
+            () => new DecisionPromptWindow(),
+            new WindowsAutoStartCoordinator(new WindowsAutoStartRegistration()));
     }
 
     /// <summary>Single-use. Subscribes the decision-prompt coordinator, wires the tray's Exit
@@ -104,6 +122,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
         {
             _promptCoordinator.Start();
             _traySurface.ExitRequested += OnExitRequested;
+            _traySurface.AutoStartToggleRequested += OnAutoStartToggleRequested;
+            _traySurface.SetAutoStartChecked(_autoStartCoordinator.IsEnabled());
             _traySurface.Show();
         }
         catch
@@ -117,13 +137,15 @@ internal sealed class PrivonAppUiBridge : IDisposable
     // cleanup failure, is what Start() rethrows) and safe to run regardless of which stage above
     // actually succeeded -- DecisionPromptCoordinator.Dispose()/ITrayIconSurface.Dispose() are
     // both already idempotent and safe even if their corresponding stage never ran (e.g. the
-    // coordinator was never Start()-ed, or the tray's ExitRequested was never subscribed).
+    // coordinator was never Start()-ed, or the tray's ExitRequested/AutoStartToggleRequested was
+    // never subscribed).
     private void RollbackPartialStart()
     {
         Safe(() => _promptCoordinator.Dispose());
         Safe(() =>
         {
             _traySurface.ExitRequested -= OnExitRequested;
+            _traySurface.AutoStartToggleRequested -= OnAutoStartToggleRequested;
             _traySurface.Dispose();
         });
     }
@@ -148,6 +170,26 @@ internal sealed class PrivonAppUiBridge : IDisposable
         _scheduler.Post(() => System.Windows.Application.Current?.Shutdown());
     }
 
+    // AUTO_START_TOGGLE (Phase 0.2I): routed through the SAME dispatcher scheduler as Exit, for the
+    // same uniform-non-blocking reason. ALWAYS re-derives "enable or disable" from a fresh
+    // IsEnabled() read (never from any state this handler itself might have cached), attempts
+    // exactly the one corresponding operation, then reflects the tray's checked state from a
+    // SECOND fresh IsEnabled() read taken after that attempt -- so a failed attempt (whatever the
+    // underlying reason) always renders the registry's own actual resulting state, never a state
+    // this type merely hoped for (see this type's own AUTO_START_UI_BINDING doc).
+    private void OnAutoStartToggleRequested(object? sender, EventArgs e)
+    {
+        _scheduler.Post(() =>
+        {
+            if (_autoStartCoordinator.IsEnabled())
+                _autoStartCoordinator.TryDisable();
+            else
+                _autoStartCoordinator.TryEnable();
+
+            _traySurface.SetAutoStartChecked(_autoStartCoordinator.IsEnabled());
+        });
+    }
+
     /// <summary>SUBSCRIPTION_LIFETIME (Phase 3C STEP40 instruction, frozen): prevents new UI
     /// dispatches first (disposes the decision-prompt coordinator, which unsubscribes from the
     /// publisher before closing any currently-visible prompt), then disposes/removes the tray
@@ -163,6 +205,7 @@ internal sealed class PrivonAppUiBridge : IDisposable
         _promptCoordinator.Dispose();
 
         _traySurface.ExitRequested -= OnExitRequested;
+        _traySurface.AutoStartToggleRequested -= OnAutoStartToggleRequested;
         _traySurface.Dispose();
     }
 }

@@ -20,6 +20,15 @@ internal sealed class FakeClipboardReadTransport : IClipboardReadTransport
     public bool StopCalled { get; private set; }
     public bool ThrowOnStart { get; set; }
 
+    /// <summary>Phase 0.2D (STEP61) -- when true, Stop() throws instead of returning, letting a
+    /// coordinator-cleanup-retry test prove a failed source Stop() is genuinely retried by a later
+    /// Stop()/Dispose() call rather than silently treated as done.</summary>
+    public bool ThrowOnStop { get; set; }
+
+    /// <summary>Number of times Stop() has actually been called -- distinct from the boolean
+    /// StopCalled so a retry test can assert Stop() was attempted MORE THAN once.</summary>
+    public int StopCallCount { get; private set; }
+
     /// <summary>Result returned by ReadTextSnapshotAsync when <see cref="HoldReadsUntilReleased"/>
     /// is false (the default) -- immediate completion, no async gap.</summary>
     public ClipboardTextReadResult NextReadResult { get; set; } =
@@ -51,6 +60,9 @@ internal sealed class FakeClipboardReadTransport : IClipboardReadTransport
     {
         CallLog.Add(nameof(Stop));
         StopCalled = true;
+        StopCallCount++;
+        if (ThrowOnStop)
+            throw new InvalidOperationException("Synthetic transport.Stop() failure for test.");
     }
 
     public Task<ClipboardTextReadResult> ReadTextSnapshotAsync(ForegroundTargetSnapshot expectedTarget)

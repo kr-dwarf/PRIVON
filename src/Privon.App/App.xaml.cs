@@ -36,9 +36,26 @@ namespace Privon.App;
 /// once BOTH roots have succeeded, so a failed startup never leaves either field pointing at
 /// something no longer stood behind ("no degraded success state"). STARTUP_FAILURE_USER_PRESENTATION
 /// remains deliberately unimplemented (no custom error dialog) -- out of scope for this STEP.
+///
+/// SINGLE_INSTANCE (Phase 0.2I, frozen): a third, even-earlier root -- a
+/// <see cref="SingleInstanceGuard"/> -- is checked BEFORE <see cref="PrivonAppComposition"/> is
+/// even constructed. A second PRIVON process (most relevant once Windows auto-start is opted into
+/// -- a manual re-launch could now coincide with an already-running auto-started instance) that
+/// cannot acquire ownership never constructs the composition root at all, meaning it never installs
+/// a second clipboard/foreground/session-lock hook, never opens a second tray icon, and never
+/// publishes a second decision scope -- it calls <see cref="Shutdown()"/> and returns immediately,
+/// still owning no other resource of any kind. This is a quiet, minimal exit -- no dialog, no
+/// window, no IPC/activation handoff to the first instance.
 /// </summary>
 public partial class App : System.Windows.Application
 {
+    // Fixed, product-level identity for this app's own single-instance mutex -- a GUID suffix
+    // avoids any realistic collision with an unrelated application's own similarly-named mutex. No
+    // "Global\" prefix (SINGLE_INSTANCE_CONTRACT: current-user/session scope, never machine-wide --
+    // see SingleInstanceGuard's own USER_SCOPED_NOT_GLOBAL doc).
+    private const string SingleInstanceMutexName = "PRIVON-SingleInstance-3F2E9A7C-4B1D-4E3A-9C7A-8D6F1A2B3C4D";
+
+    private SingleInstanceGuard? _singleInstanceGuard;
     private PrivonAppComposition? _composition;
     private PrivonAppUiBridge? _uiBridge;
 
@@ -47,6 +64,16 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var guard = new SingleInstanceGuard(SingleInstanceMutexName);
+        if (!guard.TryAcquire())
+        {
+            guard.Dispose();
+            Shutdown();
+            return;
+        }
+
+        _singleInstanceGuard = guard;
 
         var composition = new PrivonAppComposition();
         composition.Start();
@@ -69,16 +96,21 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // SHUTDOWN_ORDER (Phase 3C STEP40 instruction): the UI/tray surface is torn down first --
-        // prevents any new decision-prompt dispatch, closes any currently-visible prompt, removes
-        // the tray icon -- strictly before the composition root's own already-frozen safe shutdown
-        // ordering (session-lock observer -> coordinator -> verifier -> lifecycle -> reader ->
-        // monitor -> gate) begins.
+        // SHUTDOWN_ORDER (Phase 3C STEP40 instruction, extended Phase 0.2I): the UI/tray surface is
+        // torn down first -- prevents any new decision-prompt dispatch, closes any
+        // currently-visible prompt, removes the tray icon -- strictly before the composition root's
+        // own already-frozen safe shutdown ordering (session-lock observer -> coordinator ->
+        // verifier -> lifecycle -> reader -> monitor -> gate) begins. The single-instance guard is
+        // released LAST -- only once every other resource this process owned is already torn down
+        // does releasing mutex ownership become safe to let a waiting second instance proceed.
         _uiBridge?.Dispose();
         _uiBridge = null;
 
         _composition?.Dispose();
         _composition = null;
+
+        _singleInstanceGuard?.Dispose();
+        _singleInstanceGuard = null;
 
         base.OnExit(e);
     }

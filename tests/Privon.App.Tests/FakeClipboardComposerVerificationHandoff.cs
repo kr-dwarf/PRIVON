@@ -23,10 +23,15 @@ internal sealed class FakeClipboardComposerVerificationHandoff : IClipboardCompo
 
     public bool Publish(ForegroundTargetSnapshot expectedTarget, string expectedProtectedText, long expectedGeneration)
     {
-        CallCount++;
+        // ORDERING_HAZARD (Stabilization Gate, post-Phase-0.2E): CallCount is written LAST -- see
+        // FakeClipboardWriteTransport's identical comment / ClipboardTestDoubleOrderingHazardTests
+        // for why. This is the exact fake ThrowingDiagnosticRecorder_NeverAffectsCoordinatorFunctionalOutcome
+        // polled (via writeTransport.CallCount) and then asserted on directly (verificationHandoff.CallCount)
+        // without polling this fake's own CallCount specifically.
         ReceivedExpectedTargets.Add(expectedTarget);
         ReceivedExpectedProtectedTexts.Add(expectedProtectedText);
         ReceivedExpectedGenerations.Add(expectedGeneration);
+        CallCount++;
         if (ThrowOnPublish is { } ex) throw ex;
         return ResultToReturn;
     }
