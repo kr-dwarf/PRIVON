@@ -31,17 +31,32 @@ namespace Privon.App;
 /// necessarily-already-superseded scope) before opening a new one -- no queue of stale dialogs is
 /// ever accumulated, and no polling timer of any kind is used anywhere in this type.
 ///
-/// PROTECT_ALL_SEMANTICS (Phase 3C STEP39.1/STEP40, frozen): the ONLY user action this type ever
-/// drives is <see cref="ClipboardDecisionIntent.Protect"/>, applied sequentially to every entry in
-/// <see cref="ClipboardDecisionScope.Items"/> via <see cref="IClipboardDecisionResolver.ResolveAsync"/>
-/// -- never <c>BypassOnce</c>. A <c>Stale</c> result stops the sequence immediately (no remaining
-/// items are attempted); an <c>Applied</c> result with <c>ScopeCommitted == false</c> continues to
-/// the next item; an <c>Applied</c> result with <c>ScopeCommitted == true</c> closes the surface
-/// (never displaying "Verified"/"보호 완료"/"검증 완료" -- see <see cref="ClipboardDecisionActionResolver"/>'s
-/// own VERIFIED_BOUNDARY doc); any other outcome (<c>WriteFailed</c>/<c>MutatedUnverified</c>/
+/// PROTECT_ALL_SEMANTICS (Phase 3C STEP39.1/STEP40, extended by the Phase 0.2G SILENT_FAILURE_FIX):
+/// the ONLY user action this type ever drives is <see cref="ClipboardDecisionIntent.Protect"/>,
+/// applied sequentially to every entry in <see cref="ClipboardDecisionScope.Items"/> via
+/// <see cref="IClipboardDecisionResolver.ResolveAsync"/> -- never <c>BypassOnce</c>. An
+/// <c>Applied</c> result with <c>ScopeCommitted == false</c> continues to the next item; an
+/// <c>Applied</c> result with <c>ScopeCommitted == true</c> closes the surface (never displaying
+/// "Verified"/"보호 완료"/"검증 완료" -- see <see cref="ClipboardDecisionActionResolver"/>'s own
+/// VERIFIED_BOUNDARY doc); any other outcome (<c>Stale</c>/<c>WriteFailed</c>/<c>MutatedUnverified</c>/
 /// <c>Failed</c>/the structurally-unreachable <c>AwaitingSecondConfirmation</c>, since this type
 /// never emits <c>BypassOnce</c>) shows a neutral, non-content-bearing failure message and stops --
-/// never a success claim.
+/// never a success claim, and (as of the Phase 0.2G fix) never a silent close either. <c>Stale</c>
+/// used to stop the sequence with a bare <c>surface.Close()</c> and NO feedback at all --
+/// indistinguishable, from the user's own point of view, from a genuine committed success. A real
+/// live cross-app manual QA observation against an actual ChatGPT Desktop window and an actual
+/// running <c>Privon.App.exe</c> (never simulated) confirmed this exact, misleading failure mode
+/// in production: the popup would "just disappear" after the user clicked "모두 보호," with the
+/// raw PII left completely unprotected on the clipboard -- traced to <c>DecisionPromptWindow</c>
+/// itself being able to steal real OS foreground activation away from the authorized ChatGPT
+/// target on the user's own click, causing <see cref="ClipboardDecisionActionResolver"/>'s fresh
+/// target check to correctly (and safely) reject it as <c>Stale</c>. See <c>DecisionPromptWindow</c>'s
+/// own NON_ACTIVATING_PROMPT doc for that root-cause fix -- this type's own fix is independent
+/// defense-in-depth: <c>Stale</c> remains a legitimate, expected outcome for entirely different
+/// reasons too (e.g. the scope being superseded by a newer clipboard/foreground event while the
+/// user was still deciding), and in EVERY case where Protect All does not end in a genuinely
+/// committed <c>Applied</c> result, the user must be told explicitly -- never left to assume
+/// silence means success.
 ///
 /// USER_CLOSING_THE_PROMPT (Phase 3C STEP40 instruction, frozen): a surface's own
 /// <see cref="IDecisionPromptSurface.Closed"/> event -- however it fired, whether this type closed
@@ -211,15 +226,17 @@ internal sealed class DecisionPromptCoordinator : IDisposable
                     continue; // ScopeCommitted == false -- a sibling item is still unresolved.
                 }
 
-                if (result.Outcome == ClipboardDecisionActionOutcome.Stale)
-                {
-                    _scheduler.Post(surface.Close);
-                    return;
-                }
-
-                // WriteFailed / MutatedUnverified / Failed / AwaitingSecondConfirmation
+                // Stale / WriteFailed / MutatedUnverified / Failed / AwaitingSecondConfirmation
                 // (structurally unreachable here since this type never emits BypassOnce) -- never
-                // a success claim.
+                // a success claim, and (Phase 0.2G SILENT_FAILURE_FIX) never a silent close either.
+                // Stale used to close the surface with no feedback at all -- indistinguishable,
+                // from the user's own point of view, from a genuine committed success. A real live
+                // cross-app manual QA observation (LEVEL3_PROTECT_SELF_STALE_ROOT_CAUSE) confirmed
+                // this exact, misleading failure mode: the popup "just disappeared" after the user
+                // clicked "모두 보호," with the raw PII left completely unprotected on the
+                // clipboard. Stale now falls through to the SAME neutral-failure-message path
+                // every other non-committing outcome already used -- the user must always be told
+                // explicitly when Protect All did not actually protect anything.
                 _scheduler.Post(() => surface.ShowNeutralFailure(NeutralFailureMessage));
                 return;
             }

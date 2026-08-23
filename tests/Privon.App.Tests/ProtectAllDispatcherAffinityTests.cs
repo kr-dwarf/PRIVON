@@ -199,18 +199,22 @@ public class ProtectAllDispatcherAffinityTests
     }
 
     // ==================================================================
-    // B. Stale -> close on Dispatcher
+    // B. Stale -> neutral failure UI on Dispatcher (Phase 0.2G SILENT_FAILURE_FIX: Stale used to
+    // silently close the surface with no feedback -- now falls through to the same
+    // neutral-failure-message path as every other non-committing outcome, exactly mirroring
+    // DecisionPromptCoordinatorTests.StaleOutcome_ShowsNeutralFailureOnly_NeverSuccessClaim, but
+    // against the REAL Dispatcher-thread marshaling this file exists to prove.
     // ==================================================================
     [Fact]
-    public async Task Stale_ClosesSurface_OnDispatcherThread_NoAffinityViolation()
+    public async Task Stale_ShowsNeutralFailure_OnDispatcherThread_NoAffinityViolation()
     {
         using var h = CreateHarness();
 
         var surface = await RunScenarioAsync(h, [ClipboardDecisionActionResult.Stale()], Item1);
 
         Assert.Null(surface.ThreadAffinityViolation);
-        Assert.True(surface.IsClosed);
-        Assert.Null(surface.LastNeutralFailureMessage);
+        Assert.False(surface.IsClosed);
+        Assert.Equal(DecisionPromptCoordinator.NeutralFailureMessage, surface.LastNeutralFailureMessage);
     }
 
     // ==================================================================
