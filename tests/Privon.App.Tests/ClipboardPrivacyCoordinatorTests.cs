@@ -3083,4 +3083,123 @@ public class ClipboardPrivacyCoordinatorTests
         Assert.Equal(2, processor.CallCount);
         coordinator.Stop();
     }
+
+    // ==================================================================
+    // Phase 0.2H -- NON-AI INTERFERENCE GATE
+    // ==================================================================
+    //
+    // AUDIT_CONTEXT: this section adds literal, directly-named regression tests matching the
+    // Phase 0.2H required test matrix's own scenario letters -- it does NOT introduce any new
+    // mechanism. Scenarios A/D/E/F are already proven, with equal or greater rigor, by pre-existing
+    // tests in this file (see each test's own comment below for the exact cross-reference) --
+    // TargetTransition_ProtectedContentNeverWrittenUntilTargetBecomesAuthorized above already IS
+    // scenario B (Level2-like/phone content, non-AI target, write transport never touched).
+    // Scenario C had no equally-literal existing coverage for the DecisionPlan/NeedsDecision-popup
+    // path specifically (as opposed to the WritePlan/write path) with Level3-shaped content, so a
+    // new test is added for it below.
+
+    // A. NORMAL TEXT -- NO PII, non-AI target: ForegroundTrigger_UnauthorizedTarget_NoClipboardRead
+    // and ForegroundTrigger_UnresolvedTarget_NoClipboardRead (Section C above) already prove this
+    // structurally -- ReadTextSnapshotAsync is never even called for an unauthorized/unresolved
+    // target, which makes clipboard CONTENT irrelevant to the outcome (PRIVON never looks at it in
+    // the first place). No new test needed; this comment exists purely to close the audit-trail
+    // citation for scenario A.
+
+    // B. LEVEL2-LIKE CONTENT OUTSIDE CHATGPT:
+    // TargetTransition_ProtectedContentNeverWrittenUntilTargetBecomesAuthorized (above) already IS
+    // this exact scenario (phone-number-shaped WritePlan content, non-AI target throughout the
+    // first half of the test, processor.CallCount == 0 / writeTransport.CallCount == 0 asserted).
+    // No new test needed; this comment exists purely to close the audit-trail citation for
+    // scenario B.
+
+    // C. LEVEL3-LIKE CONTENT OUTSIDE CHATGPT -- the DecisionPlan/NeedsDecision-popup path's own
+    // analog of scenario B above: a Level3-shaped (synthetic RRN) DecisionPlan is configured on the
+    // processor, but because the target is never authorized, ReadTextSnapshotAsync itself is never
+    // called (SHARED_TRIGGER_INTAKE_VS_PIPELINE -- TargetGate runs strictly before any guarded
+    // read), so the processor can never even run to produce that DecisionPlan, and
+    // decisionSessionPublisher.TryPublish (the only thing that could ever cause a NeedsDecision
+    // popup to appear) is never called either.
+    [Fact]
+    public async Task Phase0_2H_LevelThreeContentOutsideChatGpt_NoClipboardReadNoDecisionPublish()
+    {
+        var (coordinator, transport, targetCapture, processor, _, _, decisionSessionPublisher) = CreateStartedWithPublisher();
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 1111, ProcessName: "notepad");
+        transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot(text: "900101-1234567"));
+        processor.DecisionPlanToReturn = new ClipboardDecisionPlan(
+            [new ClipboardDecisionItem(new CanonicalValue(PiiType.ResidentRegistrationNumber, "9001011234567"), RiskLevel.Level3)]);
+
+        transport.RaiseChanged(TextNotification);
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 1);
+        await Task.Delay(50);
+
+        Assert.DoesNotContain(nameof(FakeClipboardReadTransport.ReadTextSnapshotAsync), transport.CallLog);
+        Assert.Equal(0, processor.CallCount);
+        Assert.Equal(0, decisionSessionPublisher.CallCount);
+        coordinator.Stop();
+    }
+
+    // D. RAPID APP SWITCH (among non-AI targets only, never reaching ChatGPT): foreground churns
+    // rapidly across several non-AI apps -- no attempt is ever authorized, so nothing is ever read,
+    // written, or published, and (DropOldest -- the mailbox already coalesces to at most the latest
+    // pending item) no stale/late attempt can surface afterward either.
+    // CrossTrigger_RapidForegroundChurn_BoundedProcessorCalls (Section C above) already proves the
+    // adjacent "rapid churn while an authorized attempt is in flight" case; this test is the
+    // strictly simpler "never becomes authorized at all" case the 0.2H instruction asks for
+    // explicitly.
+    [Fact]
+    public async Task Phase0_2H_RapidAppSwitch_AmongNonAiTargets_NeverReadsOrWrites()
+    {
+        var (coordinator, transport, targetCapture, processor, foregroundTrigger) = CreateStartedWithForegroundTriggerOnly();
+
+        // Deliberately does NOT wait for -- let alone require -- one Capture() per Raise(): the
+        // mailbox's own capacity-1 DropOldest coalescing (CHANNEL_POLICY, ClipboardPrivacyCoordinator's
+        // own class doc) means most of these five rapid raises are expected to collapse into far
+        // fewer actual dequeued attempts before the single worker lane gets to any of them -- that
+        // coalescing is itself part of what this scenario is proving, not something to work around.
+        foreach (var name in new[] { "notepad", "explorer", "chrome", "msedge", "WindowsTerminal" })
+        {
+            targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 1, ProcessName: name);
+            foregroundTrigger.Raise();
+        }
+
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 1);
+        await Task.Delay(50);
+
+        Assert.DoesNotContain(nameof(FakeClipboardReadTransport.ReadTextSnapshotAsync), transport.CallLog);
+        Assert.Equal(0, processor.CallCount);
+        coordinator.Stop();
+    }
+
+    // E. RAPID CLIPBOARD CHANGE (copy A, then B, then C -- non-AI target maintained throughout):
+    // TargetTransition_MultipleUnauthorizedClipboardChanges_ThenAuthorizedForeground_EvaluatesLatestGenerationOnly
+    // (above) already proves the stronger claim (only the LATEST of several rapid unauthorized
+    // copies is ever even eligible for evaluation, and only once the target later becomes
+    // authorized). This test is the literal 0.2H scenario itself: the target never becomes
+    // authorized at all, so none of A/B/C is ever read, written, or restored/resurrected later.
+    [Fact]
+    public async Task Phase0_2H_RapidClipboardChange_NonAiTargetMaintained_NeitherOldNorNewContentTouched()
+    {
+        var (coordinator, transport, targetCapture, processor) = CreateStarted();
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 1111, ProcessName: "notepad");
+
+        transport.RaiseChanged(new ClipboardChangeNotification(1, true, true)); // copy A
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 1);
+        transport.RaiseChanged(new ClipboardChangeNotification(2, true, true)); // copy B
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 2);
+        transport.RaiseChanged(new ClipboardChangeNotification(3, true, true)); // copy C
+        await WaitUntilAsync(() => targetCapture.CaptureCallCount >= 3);
+        await Task.Delay(50);
+
+        Assert.DoesNotContain(nameof(FakeClipboardReadTransport.ReadTextSnapshotAsync), transport.CallLog);
+        Assert.Equal(0, processor.CallCount);
+        coordinator.Stop();
+    }
+
+    // F. CHATGPT -> OUTSIDE TRANSITION: CrossApp_UnauthorizedClipboardChangeElsewhere_InvalidatesPreviouslyPublishedDecisionScope
+    // (above) already proves this exact scenario end-to-end through a real
+    // ClipboardDecisionScopeLifecycle/ClipboardDecisionSessionPublisher -- a published NeedsDecision
+    // prompt is immediately invalidated the moment the user copies anything new while a non-AI app
+    // is foreground, the stale scope is never reachable again, and the new (unauthorized) content
+    // is itself never evaluated either. No new test needed; this comment exists purely to close the
+    // audit-trail citation for scenario F.
 }
