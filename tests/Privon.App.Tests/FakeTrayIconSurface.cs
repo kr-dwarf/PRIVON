@@ -27,12 +27,33 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
     /// worked).</summary>
     public int ExitRequestedSubscriberCount { get; private set; }
 
+    /// <summary>Phase 0.2I -- the auto-start toggle's own subscriber count, same reasoning as
+    /// <see cref="ExitRequestedSubscriberCount"/>.</summary>
+    public int AutoStartToggleRequestedSubscriberCount { get; private set; }
+
+    /// <summary>Phase 0.2I -- every value <see cref="ITrayIconSurface.SetAutoStartChecked"/> was
+    /// ever called with, in order, so a test can observe not just the FINAL checked state but the
+    /// exact sequence (e.g. "queried once at Start, then re-queried once after a toggle attempt").
+    /// </summary>
+    public List<bool> AutoStartCheckedHistory { get; } = [];
+
+    /// <summary>The most recent value passed to <see cref="ITrayIconSurface.SetAutoStartChecked"/>,
+    /// or <see langword="null"/> if it was never called.</summary>
+    public bool? CurrentAutoStartChecked => AutoStartCheckedHistory.Count > 0 ? AutoStartCheckedHistory[^1] : null;
+
     private EventHandler? _exitRequested;
+    private EventHandler? _autoStartToggleRequested;
 
     public event EventHandler? ExitRequested
     {
         add { _exitRequested += value; ExitRequestedSubscriberCount++; }
         remove { _exitRequested -= value; ExitRequestedSubscriberCount--; }
+    }
+
+    public event EventHandler? AutoStartToggleRequested
+    {
+        add { _autoStartToggleRequested += value; AutoStartToggleRequestedSubscriberCount++; }
+        remove { _autoStartToggleRequested -= value; AutoStartToggleRequestedSubscriberCount--; }
     }
 
     public void Show()
@@ -41,8 +62,13 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
         ShowCallCount++;
     }
 
+    public void SetAutoStartChecked(bool isChecked) => AutoStartCheckedHistory.Add(isChecked);
+
     /// <summary>Simulates the user choosing the tray's Exit command.</summary>
     public void RaiseExitRequested() => _exitRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Simulates the user clicking the auto-start toggle menu item.</summary>
+    public void RaiseAutoStartToggleRequested() => _autoStartToggleRequested?.Invoke(this, EventArgs.Empty);
 
     public void Dispose()
     {

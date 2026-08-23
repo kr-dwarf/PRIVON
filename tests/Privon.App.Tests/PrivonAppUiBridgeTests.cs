@@ -53,17 +53,21 @@ public class PrivonAppUiBridgeTests
         public required FakeClipboardDecisionResolver Resolver { get; init; }
         public required FakeDispatcherScheduler Scheduler { get; init; }
         public required FakeTrayIconSurface Tray { get; init; }
+        public required FakeWindowsAutoStartRegistration AutoStartRegistration { get; init; }
+        public required WindowsAutoStartCoordinator AutoStartCoordinator { get; init; }
         public required List<FakeDecisionPromptSurface> CreatedSurfaces { get; init; }
         public required PrivonAppUiBridge Bridge { get; init; }
     }
 
-    private static Harness CreateHarness()
+    private static Harness CreateHarness(string currentExecutablePath = "C:\\PRIVON\\PRIVON.exe")
     {
         var lifecycle = new ClipboardDecisionScopeLifecycle();
         var publisher = new ClipboardDecisionSessionPublisher(lifecycle);
         var resolver = new FakeClipboardDecisionResolver();
         var scheduler = new FakeDispatcherScheduler { RunSynchronously = true };
         var tray = new FakeTrayIconSurface();
+        var autoStartRegistration = new FakeWindowsAutoStartRegistration();
+        var autoStartCoordinator = new WindowsAutoStartCoordinator(autoStartRegistration, () => currentExecutablePath);
         var createdSurfaces = new List<FakeDecisionPromptSurface>();
 
         var bridge = new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, () =>
@@ -71,7 +75,7 @@ public class PrivonAppUiBridgeTests
             var surface = new FakeDecisionPromptSurface();
             createdSurfaces.Add(surface);
             return surface;
-        });
+        }, autoStartCoordinator);
 
         return new Harness
         {
@@ -80,6 +84,8 @@ public class PrivonAppUiBridgeTests
             Resolver = resolver,
             Scheduler = scheduler,
             Tray = tray,
+            AutoStartRegistration = autoStartRegistration,
+            AutoStartCoordinator = autoStartCoordinator,
             CreatedSurfaces = createdSurfaces,
             Bridge = bridge,
         };
@@ -256,6 +262,138 @@ public class PrivonAppUiBridgeTests
         Assert.Equal(new[] { "prompt", "tray" }, order);
     }
 
+    // ==================================================================
+    // Phase 0.2I -- AUTO-START TOGGLE UI BINDING
+    // ==================================================================
+
+    [Fact]
+    public void Start_FreshNoRegistration_TrayReflectsOff()
+    {
+        var h = CreateHarness();
+
+        h.Bridge.Start();
+
+        Assert.Equal(false, h.Tray.CurrentAutoStartChecked);
+    }
+
+    [Fact]
+    public void Start_ExistingValidRegistration_TrayReflectsOn()
+    {
+        var h = CreateHarness(currentExecutablePath: "C:\\PRIVON\\PRIVON.exe");
+        h.AutoStartRegistration.Seed("PRIVON", "\"C:\\PRIVON\\PRIVON.exe\"");
+
+        h.Bridge.Start();
+
+        Assert.Equal(true, h.Tray.CurrentAutoStartChecked);
+    }
+
+    [Fact]
+    public void Start_StaleDifferentPathRegistration_TrayReflectsOff_NeverFalsePositive()
+    {
+        var h = CreateHarness(currentExecutablePath: "C:\\PRIVON\\PRIVON.exe");
+        h.AutoStartRegistration.Seed("PRIVON", "\"C:\\OldLocation\\PRIVON.exe\"");
+
+        h.Bridge.Start();
+
+        Assert.Equal(false, h.Tray.CurrentAutoStartChecked);
+    }
+
+    [Fact]
+    public void AutoStartToggle_FromOff_Enables_TrayShowsChecked()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+        Assert.Equal(false, h.Tray.CurrentAutoStartChecked);
+
+        h.Tray.RaiseAutoStartToggleRequested();
+
+        Assert.Equal(true, h.Tray.CurrentAutoStartChecked);
+        Assert.True(h.AutoStartCoordinator.IsEnabled());
+    }
+
+    [Fact]
+    public void AutoStartToggle_FromOn_Disables_TrayShowsUnchecked()
+    {
+        var h = CreateHarness(currentExecutablePath: "C:\\PRIVON\\PRIVON.exe");
+        h.AutoStartRegistration.Seed("PRIVON", "\"C:\\PRIVON\\PRIVON.exe\"");
+        h.Bridge.Start();
+        Assert.Equal(true, h.Tray.CurrentAutoStartChecked);
+
+        h.Tray.RaiseAutoStartToggleRequested();
+
+        Assert.Equal(false, h.Tray.CurrentAutoStartChecked);
+        Assert.False(h.AutoStartCoordinator.IsEnabled());
+    }
+
+    [Fact]
+    public void AutoStartToggle_EnableAttemptFails_TrayNeverFalselyShowsChecked()
+    {
+        var h = CreateHarness();
+        h.AutoStartRegistration.FailSet = true;
+        h.Bridge.Start();
+        Assert.Equal(false, h.Tray.CurrentAutoStartChecked);
+
+        h.Tray.RaiseAutoStartToggleRequested();
+
+        // The attempt failed -- the tray must reflect the ACTUAL (still-off) registry state, never
+        // a state this type merely hoped for.
+        Assert.Equal(false, h.Tray.CurrentAutoStartChecked);
+        Assert.False(h.AutoStartCoordinator.IsEnabled());
+    }
+
+    [Fact]
+    public void AutoStartToggle_DisableAttemptFails_TrayNeverFalselyShowsUnchecked()
+    {
+        var h = CreateHarness(currentExecutablePath: "C:\\PRIVON\\PRIVON.exe");
+        h.AutoStartRegistration.Seed("PRIVON", "\"C:\\PRIVON\\PRIVON.exe\"");
+        h.AutoStartRegistration.FailDelete = true;
+        h.Bridge.Start();
+        Assert.Equal(true, h.Tray.CurrentAutoStartChecked);
+
+        h.Tray.RaiseAutoStartToggleRequested();
+
+        Assert.Equal(true, h.Tray.CurrentAutoStartChecked); // still registered -- never falsely shown off
+        Assert.True(h.AutoStartCoordinator.IsEnabled());
+    }
+
+    [Fact]
+    public void AutoStartToggle_RoutesThroughTheSameDispatcherScheduler()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+
+        var postCountBefore = h.Scheduler.PostCallCount;
+        h.Tray.RaiseAutoStartToggleRequested();
+
+        Assert.True(h.Scheduler.PostCallCount > postCountBefore);
+    }
+
+    [Fact]
+    public void Dispose_UnsubscribesAutoStartToggle_LaterRaiseDoesNothing()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+
+        h.Bridge.Dispose();
+
+        Assert.Equal(0, h.Tray.AutoStartToggleRequestedSubscriberCount);
+
+        var setCallsBefore = h.AutoStartRegistration.TrySetValueCallCount;
+        h.Tray.RaiseAutoStartToggleRequested();
+        Assert.Equal(setCallsBefore, h.AutoStartRegistration.TrySetValueCallCount);
+    }
+
+    [Fact]
+    public void Start_TrayShowThrows_AutoStartToggleSubscriptionIsRemoved()
+    {
+        var h = CreateHarness();
+        h.Tray.ThrowOnShow = new InvalidOperationException("synthetic");
+
+        Assert.ThrowsAny<Exception>(h.Bridge.Start);
+
+        Assert.Equal(0, h.Tray.AutoStartToggleRequestedSubscriberCount);
+    }
+
     [Fact]
     public void Constructor_NullArguments_Throw()
     {
@@ -265,13 +403,15 @@ public class PrivonAppUiBridgeTests
         var scheduler = new FakeDispatcherScheduler();
         var tray = new FakeTrayIconSurface();
         Func<IDecisionPromptSurface> factory = () => new FakeDecisionPromptSurface();
+        var autoStart = new WindowsAutoStartCoordinator(new FakeWindowsAutoStartRegistration());
 
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(null!, lifecycle, resolver, scheduler, tray, factory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, null!, resolver, scheduler, tray, factory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, null!, scheduler, tray, factory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, null!, tray, factory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, null!, factory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, null!));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(null!, lifecycle, resolver, scheduler, tray, factory, autoStart));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, null!, resolver, scheduler, tray, factory, autoStart));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, null!, scheduler, tray, factory, autoStart));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, null!, tray, factory, autoStart));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, null!, factory, autoStart));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, null!, autoStart));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, null!));
     }
 
     // ==================================================================
@@ -281,6 +421,9 @@ public class PrivonAppUiBridgeTests
     [Theory]
     [InlineData(typeof(PrivonAppUiBridge))]
     [InlineData(typeof(ITrayIconSurface))]
+    [InlineData(typeof(WindowsAutoStartCoordinator))]
+    [InlineData(typeof(IWindowsAutoStartRegistration))]
+    [InlineData(typeof(WindowsAutoStartRegistration))]
     public void Types_AreNotPublic(Type type)
     {
         Assert.False(type.IsPublic);
