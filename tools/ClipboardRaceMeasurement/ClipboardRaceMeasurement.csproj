@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 0.2G: Immediate Paste Race Gate measurement harness.
+
+    NOT registered in PRIVON.slnx, mirroring tools/UiaInspector's own existing precedent: this is a
+    standalone, on-demand diagnostic tool, not part of the counted 1802/1802 regression baseline.
+    It exists to gather real latency/outcome evidence for a release-blocker decision, not to run on
+    every CI build; running it repeatedly mutates the REAL system clipboard (with synthetic PII
+    only, never real user data), which the project's own WINDOWS_SMOKE_POLICY deliberately keeps
+    out of the standard xunit regression suite.
+
+    References the real production Privon.Windows / Privon.Detection assemblies via ProjectReference
+    and calls ONLY their public API surface: no InternalsVisibleTo, no test doubles, no production
+    code changes anywhere in this repository.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Privon.Windows\Privon.Windows.csproj" />
+    <ProjectReference Include="..\..\src\Privon.Detection\Privon.Detection.csproj" />
+  </ItemGroup>
+
+</Project>
