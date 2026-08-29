@@ -12,7 +12,7 @@ namespace Privon.App;
 /// Dependencies exactly as frozen: <see cref="IClipboardGenerationSnapshot"/> (generation-freshness
 /// only, never the wider <see cref="IClipboardDecisionScopeLifecycle"/>),
 /// <see cref="IComposerReadTransport"/>, <see cref="IClipboardOperationGate"/> (the SAME concrete
-/// instance a future composition root gives <see cref="ClipboardPrivacyCoordinator"/>/
+/// instance <see cref="PrivonAppComposition.BuildGraph"/> gives <see cref="ClipboardPrivacyCoordinator"/>/
 /// <c>ClipboardDecisionActionResolver"/> -- two independent instances would serialize nothing
 /// relative to each other). NO <see cref="IForegroundTargetCapture"/> dependency of any kind --
 /// the composer read always uses the pinned pending record's own

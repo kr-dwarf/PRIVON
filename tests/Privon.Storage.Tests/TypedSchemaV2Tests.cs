@@ -20,8 +20,11 @@ public class TypedSchemaV2Tests : IDisposable
 
     private byte[] MasterKey()
     {
-        // Same lazy-create-or-load path PrivonLocalStore itself uses, so a payload encrypted
-        // here decrypts under the exact same key the store will use to read it back.
+        // NOT the same resolver path PrivonLocalStore itself uses (that goes through
+        // MasterKeyStore.LoadOrCreateOrUnavailable via OpenOrCreate; this is the separate legacy
+        // MasterKeyStore.LoadOrCreate API). For a fresh path with no pre-existing key, both
+        // converge on the identical CreateAndSave-produced key file, so a payload encrypted here
+        // still decrypts under the exact same key the store will use to read it back.
         Directory.CreateDirectory(_root);
         return MasterKeyStore.LoadOrCreate(Path.Combine(_root, "master.key"));
     }

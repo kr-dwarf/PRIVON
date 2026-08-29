@@ -45,6 +45,26 @@ internal sealed class FakeClipboardReadTransport : IClipboardReadTransport
 
     public int PendingHeldReadCount => _heldReads.Count;
 
+    /// <summary>
+    /// BUG-002 Gate 2B -- per-call scripted results, additive and empty by default (so every
+    /// pre-Gate-2B test keeps the exact single-value <see cref="NextReadResult"/> behavior). When
+    /// non-empty, each ReadTextSnapshotAsync call consumes the next scripted result in order; once
+    /// exhausted, behavior falls back to <see cref="NextReadResult"/>/<see cref="HoldReadsUntilReleased"/>
+    /// exactly as before. Lets a retry regression express "attempt 1 fails transiently, attempt 2
+    /// succeeds" without any timing dependency.
+    /// </summary>
+    public void ScriptReadResults(params ClipboardTextReadResult[] results)
+    {
+        foreach (var result in results)
+            _scriptedReads.Enqueue(result);
+    }
+
+    private readonly ConcurrentQueue<ClipboardTextReadResult> _scriptedReads = new();
+
+    /// <summary>Number of ReadTextSnapshotAsync calls made so far -- distinct from the CallLog so a
+    /// retry test can assert an exact attempt count.</summary>
+    public int ReadCallCount { get; private set; }
+
     /// <summary>Simulates the underlying Windows owner thread raising Changed synchronously.</summary>
     public void RaiseChanged(ClipboardChangeNotification notification) => Changed?.Invoke(this, notification);
 
@@ -69,6 +89,14 @@ internal sealed class FakeClipboardReadTransport : IClipboardReadTransport
     {
         CallLog.Add(nameof(ReadTextSnapshotAsync));
         ReceivedExpectedTargets.Add(expectedTarget);
+        // ORDERING_HAZARD: written LAST among the observable companion fields above, matching
+        // FakeClipboardWriteTransport/FakeClipboardPrivacyProcessor's own identical discipline.
+        ReadCallCount++;
+
+        // BUG-002 Gate 2B -- scripted results take precedence when present; empty (the default)
+        // means every pre-Gate-2B code path below is reached exactly as before.
+        if (_scriptedReads.TryDequeue(out var scripted))
+            return Task.FromResult(scripted);
 
         if (!HoldReadsUntilReleased)
             return Task.FromResult(NextReadResult);

@@ -1,3 +1,5 @@
+using Privon.Detection;
+
 namespace Privon.App;
 
 /// <summary>
@@ -33,10 +35,21 @@ namespace Privon.App;
 /// read taken AFTER that attempt -- so a failed enable/disable (whatever the underlying reason)
 /// always renders whatever the registry actually ends up containing, never a state this type merely
 /// hoped for.
+///
+/// PRIVON v0.2.1 Gate 3C -- this type now ALSO owns the ONE <see cref="SettingsCoordinator"/>,
+/// exactly like it already owns the ONE <see cref="DecisionPromptCoordinator"/>: constructed
+/// internally (never passed in pre-built), from the SAME shared
+/// <see cref="PrivonAppComposition.CategorySettingsService"/>/<see cref="PrivonAppComposition.SettingsUserExceptionService"/>
+/// a <see cref="PrivonAppComposition"/> already owns and started -- never a second, independently-
+/// opened <c>PrivonLocalStore</c> (COMPOSITION_ROOT_OWNERSHIP, same precedent as the decision-prompt
+/// wiring above). The tray's own <see cref="ITrayIconSurface.SettingsRequested"/> is routed through
+/// the SAME <see cref="IDispatcherScheduler"/> used for Exit/auto-start-toggle, for the identical
+/// uniform-non-blocking reason.
 /// </summary>
 internal sealed class PrivonAppUiBridge : IDisposable
 {
     private readonly DecisionPromptCoordinator _promptCoordinator;
+    private readonly SettingsCoordinator _settingsCoordinator;
     private readonly ITrayIconSurface _traySurface;
     private readonly IDispatcherScheduler _scheduler;
     private readonly WindowsAutoStartCoordinator _autoStartCoordinator;
@@ -52,7 +65,12 @@ internal sealed class PrivonAppUiBridge : IDisposable
         IDispatcherScheduler scheduler,
         ITrayIconSurface traySurface,
         Func<IDecisionPromptSurface> promptSurfaceFactory,
-        WindowsAutoStartCoordinator autoStartCoordinator)
+        WindowsAutoStartCoordinator autoStartCoordinator,
+        ProtectionCategorySettingsService categorySettingsService,
+        UserExceptionService userExceptionService,
+        DetectionPipeline detectionPipeline,
+        Func<bool> isMasterKeyUnavailable,
+        Func<ISettingsSurface> settingsSurfaceFactory)
     {
         ArgumentNullException.ThrowIfNull(sessionPublisher);
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -61,11 +79,18 @@ internal sealed class PrivonAppUiBridge : IDisposable
         ArgumentNullException.ThrowIfNull(traySurface);
         ArgumentNullException.ThrowIfNull(promptSurfaceFactory);
         ArgumentNullException.ThrowIfNull(autoStartCoordinator);
+        ArgumentNullException.ThrowIfNull(categorySettingsService);
+        ArgumentNullException.ThrowIfNull(userExceptionService);
+        ArgumentNullException.ThrowIfNull(detectionPipeline);
+        ArgumentNullException.ThrowIfNull(isMasterKeyUnavailable);
+        ArgumentNullException.ThrowIfNull(settingsSurfaceFactory);
 
         _scheduler = scheduler;
         _traySurface = traySurface;
         _autoStartCoordinator = autoStartCoordinator;
         _promptCoordinator = new DecisionPromptCoordinator(sessionPublisher, lifecycle, resolver, scheduler, promptSurfaceFactory);
+        _settingsCoordinator = new SettingsCoordinator(
+            categorySettingsService, userExceptionService, detectionPipeline, isMasterKeyUnavailable, settingsSurfaceFactory);
     }
 
     /// <summary>The only production construction path -- wires the real
@@ -85,6 +110,10 @@ internal sealed class PrivonAppUiBridge : IDisposable
             ?? throw new InvalidOperationException("PrivonAppComposition.Start() must succeed before creating the UI bridge.");
         var resolver = composition.Resolver
             ?? throw new InvalidOperationException("PrivonAppComposition.Start() must succeed before creating the UI bridge.");
+        var categorySettingsService = composition.CategorySettingsService
+            ?? throw new InvalidOperationException("PrivonAppComposition.Start() must succeed before creating the UI bridge.");
+        var userExceptionService = composition.SettingsUserExceptionService
+            ?? throw new InvalidOperationException("PrivonAppComposition.Start() must succeed before creating the UI bridge.");
 
         return new PrivonAppUiBridge(
             sessionPublisher,
@@ -93,7 +122,12 @@ internal sealed class PrivonAppUiBridge : IDisposable
             new WpfDispatcherScheduler(),
             new WinFormsTrayIconSurface(),
             () => new DecisionPromptWindow(),
-            new WindowsAutoStartCoordinator(new WindowsAutoStartRegistration()));
+            new WindowsAutoStartCoordinator(new WindowsAutoStartRegistration()),
+            categorySettingsService,
+            userExceptionService,
+            DetectionPipeline.CreateDefault(),
+            () => composition.IsMasterKeyUnavailable,
+            () => new SettingsWindow());
     }
 
     /// <summary>Single-use. Subscribes the decision-prompt coordinator, wires the tray's Exit
@@ -123,6 +157,7 @@ internal sealed class PrivonAppUiBridge : IDisposable
             _promptCoordinator.Start();
             _traySurface.ExitRequested += OnExitRequested;
             _traySurface.AutoStartToggleRequested += OnAutoStartToggleRequested;
+            _traySurface.SettingsRequested += OnSettingsRequested;
             _traySurface.SetAutoStartChecked(_autoStartCoordinator.IsEnabled());
             _traySurface.Show();
         }
@@ -142,10 +177,12 @@ internal sealed class PrivonAppUiBridge : IDisposable
     private void RollbackPartialStart()
     {
         Safe(() => _promptCoordinator.Dispose());
+        Safe(() => _settingsCoordinator.Dispose());
         Safe(() =>
         {
             _traySurface.ExitRequested -= OnExitRequested;
             _traySurface.AutoStartToggleRequested -= OnAutoStartToggleRequested;
+            _traySurface.SettingsRequested -= OnSettingsRequested;
             _traySurface.Dispose();
         });
     }
@@ -190,10 +227,21 @@ internal sealed class PrivonAppUiBridge : IDisposable
         });
     }
 
-    /// <summary>SUBSCRIPTION_LIFETIME (Phase 3C STEP40 instruction, frozen): prevents new UI
-    /// dispatches first (disposes the decision-prompt coordinator, which unsubscribes from the
-    /// publisher before closing any currently-visible prompt), then disposes/removes the tray
-    /// surface. Idempotent.</summary>
+    // SETTINGS (PRIVON v0.2.1 Gate 3C): routed through the SAME dispatcher scheduler as Exit/
+    // auto-start-toggle, for the same uniform-non-blocking reason. ONE_CURRENT_SETTINGS_WINDOW
+    // itself is entirely SettingsCoordinator's own responsibility -- this handler only ever forwards
+    // the request.
+    private void OnSettingsRequested(object? sender, EventArgs e)
+    {
+        _scheduler.Post(_settingsCoordinator.ShowRequested);
+    }
+
+    /// <summary>SUBSCRIPTION_LIFETIME (Phase 3C STEP40 instruction, frozen; extended PRIVON v0.2.1
+    /// Gate 3C): prevents new UI dispatches first -- disposes the decision-prompt coordinator
+    /// (unsubscribes from the publisher, closes any currently-visible prompt) and the Settings
+    /// coordinator (closes any currently-open Settings window -- SETTINGS_CLOSED_BEFORE_UI_BRIDGE_TEARDOWN,
+    /// this Gate's own instruction: Settings must be closed before this method returns) -- THEN
+    /// disposes/removes the tray surface. Idempotent.</summary>
     public void Dispose()
     {
         lock (_gate)
@@ -203,9 +251,11 @@ internal sealed class PrivonAppUiBridge : IDisposable
         }
 
         _promptCoordinator.Dispose();
+        _settingsCoordinator.Dispose();
 
         _traySurface.ExitRequested -= OnExitRequested;
         _traySurface.AutoStartToggleRequested -= OnAutoStartToggleRequested;
+        _traySurface.SettingsRequested -= OnSettingsRequested;
         _traySurface.Dispose();
     }
 }

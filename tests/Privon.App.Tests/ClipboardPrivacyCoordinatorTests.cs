@@ -244,7 +244,7 @@ public class ClipboardPrivacyCoordinatorTests
     public async Task GuardedRead_ReceivesExactSnapshotThatPassedPolicy()
     {
         var (coordinator, transport, targetCapture, _) = CreateStarted();
-        var expected = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT");
+        var expected = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         targetCapture.SnapshotToReturn = expected;
 
         transport.RaiseChanged(TextNotification);
@@ -345,7 +345,7 @@ public class ClipboardPrivacyCoordinatorTests
     public async Task Success_ForwardsExactExpectedTargetToProcessor()
     {
         var (coordinator, transport, targetCapture, processor) = CreateStarted();
-        var expected = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT");
+        var expected = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         targetCapture.SnapshotToReturn = expected;
         transport.NextReadResult = ClipboardTextReadResult.Success(new ClipboardTextSnapshot(1, true, "x"));
 
@@ -542,7 +542,7 @@ public class ClipboardPrivacyCoordinatorTests
     public async Task Write_ForwardsExactExpectedTargetThatAuthorizedRead()
     {
         var (coordinator, transport, targetCapture, processor, writeTransport) = CreateStartedWithWrite();
-        var expected = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT");
+        var expected = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         targetCapture.SnapshotToReturn = expected;
         transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
         processor.WritePlanToReturn = new ClipboardWritePlan("[전화번호1]");
@@ -1775,7 +1775,7 @@ public class ClipboardPrivacyCoordinatorTests
     public async Task VerifiedWrite_PublishesExactTargetTextGeneration()
     {
         var (coordinator, transport, targetCapture, processor, writeTransport, _, _, _, verificationHandoff, _) = CreateStartedWithVerification();
-        var expectedTarget = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT");
+        var expectedTarget = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         targetCapture.SnapshotToReturn = expectedTarget;
         transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot(sequence: 42));
         processor.WritePlanToReturn = new ClipboardWritePlan("[전화번호1]");
@@ -1896,7 +1896,7 @@ public class ClipboardPrivacyCoordinatorTests
     {
         var (coordinator, transport, targetCapture, processor, writeTransport, notificationLifecycle, _, _, verificationHandoff, verificationInvalidation)
             = CreateStartedWithVerification();
-        var expectedTarget = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT");
+        var expectedTarget = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 9999, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         targetCapture.SnapshotToReturn = expectedTarget;
         transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot(sequence: 42));
         processor.WritePlanToReturn = new ClipboardWritePlan("[전화번호1]");
@@ -2876,7 +2876,7 @@ public class ClipboardPrivacyCoordinatorTests
 
         // The user switches to ChatGPT -- the STILL-OPEN generation 1 (nothing re-copied it) is now
         // claimed via a fresh CurrentGeneration read and evaluated for the first time.
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
         foregroundTrigger.Raise();
         await WaitUntilAsync(() => processor.CallCount >= 1);
@@ -2901,7 +2901,7 @@ public class ClipboardPrivacyCoordinatorTests
         Assert.Equal(2, lifecycle.CurrentGeneration);
         Assert.Equal(0, processor.CallCount); // neither unauthorized copy was ever evaluated
 
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
         foregroundTrigger.Raise();
         await WaitUntilAsync(() => processor.CallCount >= 1);
@@ -2943,7 +2943,7 @@ public class ClipboardPrivacyCoordinatorTests
 
         // The user switches to ChatGPT -- the SAME still-open generation's sensitive content is now
         // protected exactly once.
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         foregroundTrigger.Raise();
         await WaitUntilAsync(() => writeTransport.CallCount >= 1);
 
@@ -2970,7 +2970,7 @@ public class ClipboardPrivacyCoordinatorTests
     public async Task SessionLockReset_DuringInFlightForegroundEvaluation_StaleReportIsNoOp_NewGenerationEvaluatesCleanly()
     {
         var (coordinator, transport, targetCapture, processor, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         transport.HoldReadsUntilReleased = true;
 
         // A foreground-triggered attempt claims generation 0 and is now InProgress, mid-read.
@@ -3006,7 +3006,7 @@ public class ClipboardPrivacyCoordinatorTests
     public async Task SessionLockReset_WhileOperationGateHeldByInFlightForegroundAttempt_NeverBlocks()
     {
         var (coordinator, transport, targetCapture, _, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         transport.HoldReadsUntilReleased = true;
 
         // A foreground-triggered attempt is InProgress, holding the operation gate for the entire
@@ -3047,7 +3047,7 @@ public class ClipboardPrivacyCoordinatorTests
         var (coordinator, transport, targetCapture, processor, foregroundTrigger, lifecycle) = CreateStartedWithRealLifecycleAndForegroundTrigger();
 
         // A NeedsDecision prompt gets published while ChatGPT is genuinely foreground.
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         transport.NextReadResult = ClipboardTextReadResult.Success(SuccessSnapshot());
         processor.DecisionPlanToReturn = SampleDecisionPlan();
 
@@ -3075,7 +3075,7 @@ public class ClipboardPrivacyCoordinatorTests
 
         // The user switches back to ChatGPT -- the LATEST (post-Notepad) generation is claimed and
         // evaluated cleanly, never the stale generation the old prompt belonged to.
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT", PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
         processor.DecisionPlanToReturn = null;
         foregroundTrigger.Raise();
         await WaitUntilAsync(() => processor.CallCount >= 2);

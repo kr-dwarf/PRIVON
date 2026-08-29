@@ -22,8 +22,8 @@ namespace Privon.App;
 /// <c>finally</c>, holding it for the ENTIRE attempt (initial validation through the final commit/
 /// write, exactly mirroring <see cref="ClipboardPrivacyCoordinator.ProcessNotificationAsync"/>'s
 /// own acquisition boundary). The <see cref="IClipboardOperationGate"/> instance passed to this
-/// type's constructor MUST be the SAME concrete <see cref="ClipboardOperationGate"/> instance a
-/// future composition root gives <see cref="ClipboardPrivacyCoordinator"/> -- two independent
+/// type's constructor MUST be the SAME concrete <see cref="ClipboardOperationGate"/> instance
+/// <see cref="PrivonAppComposition.BuildGraph"/> gives <see cref="ClipboardPrivacyCoordinator"/> -- two independent
 /// instances would serialize nothing relative to each other (Phase 3B STEP22 audit's
 /// SERIALIZATION_PRIMITIVE finding, Phase 3B STEP23's OPERATION_GATE_INSTANCE_IDENTITY doc). This
 /// gate is never acquired synchronously (<c>Wait()</c>/<c>.Result</c>/<c>.GetAwaiter().GetResult()</c>

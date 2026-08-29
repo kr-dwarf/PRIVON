@@ -124,7 +124,11 @@ public class ClipboardDiagnosticTests
     public async Task TextNotification_AuthorizedTarget_RecordsChatGptProcessName()
     {
         var (coordinator, transport, targetCapture, _, _, _, _, diagnostics) = CreateStartedWithDiagnostics();
-        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        // BUG-004 Gate 2G: migrated to carry the approved current-product package identity -- this
+        // fixture's whole purpose is "the officially supported target," asserted below via
+        // TargetAuthorized.
+        targetCapture.SnapshotToReturn = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT",
+            PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
 
         transport.RaiseChanged(TextNotification);
         await WaitUntilAsync(() => HasTerminal(diagnostics));

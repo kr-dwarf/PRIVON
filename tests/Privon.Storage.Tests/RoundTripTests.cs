@@ -11,7 +11,11 @@ public class RoundTripTests : IDisposable
     public void Settings_RoundTrips()
     {
         var store = PrivonLocalStore.OpenOrCreate(_root);
-        var settings = new PrivonSettings(ProtectionEnabled: false, PausedUntilUtc: DateTimeOffset.UtcNow);
+        var settings = new PrivonSettings(
+            ProtectionEnabled: false,
+            PausedUntilUtc: DateTimeOffset.UtcNow,
+            Categories: new ProtectionCategorySettings(
+                NameEnabled: true, PhoneEnabled: false, EmailEnabled: true, AddressEnabled: false, CompanyEnabled: true));
 
         store.SaveSettings(settings);
         var loaded = store.LoadSettings();

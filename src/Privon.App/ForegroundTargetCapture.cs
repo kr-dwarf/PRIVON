@@ -5,8 +5,8 @@ namespace Privon.App;
 /// <summary>
 /// Phase 3B STEP2 -- the only production implementation of <see cref="IForegroundTargetCapture"/>.
 /// A single-line delegation to an owned <see cref="ForegroundTargetInspector"/> -- no policy, no
-/// duplicated foreground-inspection logic. Not yet constructed by any live composition root
-/// (Phase 3B STEP2 explicitly does not wire <c>App.xaml.cs</c>).
+/// duplicated foreground-inspection logic. Constructed by the live composition root -- see
+/// <see cref="PrivonAppComposition.BuildGraph"/>.
 /// </summary>
 internal sealed class ForegroundTargetCapture : IForegroundTargetCapture
 {

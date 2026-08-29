@@ -10,15 +10,13 @@ namespace Privon.App;
 /// duplicate clipboard logic exists here -- if <see cref="ClipboardChangeMonitor"/>'s own
 /// behavior ever needs to change, this wrapper never needs a matching change.
 ///
-/// Not yet constructed by any live composition root (this STEP explicitly does not wire
-/// <c>App.xaml.cs</c>). A future composition root that wants read+write over the SAME underlying
-/// owner thread/HWND (Phase 3A.4 STEP1's thread-ownership invariant -- exactly one
-/// <see cref="ClipboardChangeMonitor"/> instance backing both) must construct exactly one
-/// <see cref="ClipboardChangeMonitor"/> and pass it to both this type's and
-/// <see cref="ClipboardReadTransport"/>'s internal constructor overload -- never let each type's
-/// own public parameterless constructor create its own separate instance if both are used
-/// together in the same process. That composition decision belongs to the future live-activation
-/// STEP, not this one.
+/// Constructed by the live composition root -- see <see cref="PrivonAppComposition.BuildGraph"/>,
+/// which shares the SAME underlying owner thread/HWND with <see cref="ClipboardReadTransport"/>
+/// (Phase 3A.4 STEP1's thread-ownership invariant -- exactly one <see cref="ClipboardChangeMonitor"/>
+/// instance backing both): <c>BuildGraph</c> constructs exactly one <see cref="ClipboardChangeMonitor"/>
+/// and passes it to both this type's and <see cref="ClipboardReadTransport"/>'s internal
+/// constructor overload -- never each type's own public parameterless constructor creating its own
+/// separate instance.
 /// </summary>
 internal sealed class ClipboardWriteTransport : IClipboardWriteTransport, IDisposable
 {

@@ -31,6 +31,10 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
     /// <see cref="ExitRequestedSubscriberCount"/>.</summary>
     public int AutoStartToggleRequestedSubscriberCount { get; private set; }
 
+    /// <summary>PRIVON v0.2.1 Gate 3C -- the Settings menu item's own subscriber count, same
+    /// reasoning as <see cref="ExitRequestedSubscriberCount"/>.</summary>
+    public int SettingsRequestedSubscriberCount { get; private set; }
+
     /// <summary>Phase 0.2I -- every value <see cref="ITrayIconSurface.SetAutoStartChecked"/> was
     /// ever called with, in order, so a test can observe not just the FINAL checked state but the
     /// exact sequence (e.g. "queried once at Start, then re-queried once after a toggle attempt").
@@ -43,6 +47,7 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
 
     private EventHandler? _exitRequested;
     private EventHandler? _autoStartToggleRequested;
+    private EventHandler? _settingsRequested;
 
     public event EventHandler? ExitRequested
     {
@@ -54,6 +59,12 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
     {
         add { _autoStartToggleRequested += value; AutoStartToggleRequestedSubscriberCount++; }
         remove { _autoStartToggleRequested -= value; AutoStartToggleRequestedSubscriberCount--; }
+    }
+
+    public event EventHandler? SettingsRequested
+    {
+        add { _settingsRequested += value; SettingsRequestedSubscriberCount++; }
+        remove { _settingsRequested -= value; SettingsRequestedSubscriberCount--; }
     }
 
     public void Show()
@@ -69,6 +80,9 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
 
     /// <summary>Simulates the user clicking the auto-start toggle menu item.</summary>
     public void RaiseAutoStartToggleRequested() => _autoStartToggleRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Simulates the user choosing the tray's "Settings..." command.</summary>
+    public void RaiseSettingsRequested() => _settingsRequested?.Invoke(this, EventArgs.Empty);
 
     public void Dispose()
     {

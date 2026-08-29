@@ -1,5 +1,19 @@
 # GitHub Publication Checklist
 
+> **HISTORICAL / ARCHIVED.** This document records the repository's original
+> **pre-publication** checklist, written before the PRIVON repository existed on GitHub.
+> The repository has since been published, with real release tags (see
+> [README.md](../README.md#release-provenance)/[README.ko.md](../README.ko.md#공개-기록)).
+> Statements below such as "the repository does not exist on GitHub yet" describe that
+> historical, pre-publication moment — not the current state. Unchecked (`[ ]`) items are
+> historical intentions/checkpoints from that time, not a current to-do list; this file is
+> preserved as-is rather than rewritten or re-checked.
+>
+> **This file is NOT evidence of current GitHub repository settings, branch protection,
+> security settings, CI, or release status.** For the current state, use the current
+> README, the actual repository configuration, and current release evidence — never this
+> archived checklist.
+
 This is a **manual UI settings checklist** for when the PRIVON repository is actually
 published on GitHub. Nothing in this document asserts that any of these settings are
 currently active — the repository does not exist on GitHub yet as of this document being

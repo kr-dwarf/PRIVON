@@ -152,9 +152,14 @@ namespace Privon.App;
 /// OUT OF SCOPE for this STEP (deliberately not implemented anywhere near this type): a
 /// <c>ProtectionState</c> aggregator, any automatic/timer/callback-triggered
 /// <see cref="ClipboardComposerVerifier.VerifyAsync"/> call (remains explicit-user-triggered future
-/// behavior), Send-intent interception, BypassOnce/NeedsDecision UI, a tray icon, a
-/// <c>MainWindow</c>/<c>StartupUri</c>, hotkeys, and WTS session-disconnect/logoff hardening
-/// (<c>SESSION_DISCONNECT_HARDENING</c> remains OPEN/optional/deferred).
+/// behavior), Send-intent interception, BypassOnce, a <c>MainWindow</c>/<c>StartupUri</c>, hotkeys,
+/// and WTS session-disconnect/logoff hardening (<c>SESSION_DISCONNECT_HARDENING</c> remains
+/// OPEN/optional/deferred). NeedsDecision UI and the tray icon are NOT out of scope of the product
+/// as a whole -- both are live, owned by <see cref="PrivonAppUiBridge"/>, which is constructed
+/// directly on top of this type's own exposed <see cref="Resolver"/>/<see cref="Lifecycle"/>/
+/// <see cref="SessionPublisher"/> (see <see cref="PrivonAppUiBridge.CreateProduction"/>) -- they are
+/// simply out of scope of THIS type's own direct ownership, exactly like every other field this
+/// type exposes rather than owns.
 /// </summary>
 internal sealed class PrivonAppComposition : IDisposable
 {
@@ -187,6 +192,15 @@ internal sealed class PrivonAppComposition : IDisposable
     private ClipboardPrivacyCoordinator? _coordinator;
     private ClipboardDecisionActionResolver? _resolver;
     private ClipboardDecisionSessionPublisher? _sessionPublisher;
+
+    // PRIVON v0.2.1 Gate 3C -- the Settings UI's own backend seams. _store is retained (unlike the
+    // read-only *Provider locals BuildGraph already constructs) purely so IsMasterKeyUnavailable
+    // below can expose Storage's own metadata-only signal -- never a second, independently-drifting
+    // source of truth (see PrivonLocalStore.IsMasterKeyUnavailable's own doc). Assigned once, in
+    // BuildGraph, exactly like every other direct-ownership field here.
+    private PrivonLocalStore? _store;
+    private ProtectionCategorySettingsService? _categorySettingsService;
+    private UserExceptionService? _userExceptionService;
 
     // Phase 3C STEP41.1 correction (STEP43.1): the ONE diagnostic recorder instance for the whole
     // process -- but as of this STEP, only ever constructed at all when _enableDiagnostics is true
@@ -304,6 +318,25 @@ internal sealed class PrivonAppComposition : IDisposable
     /// already uses. <see langword="null"/> before a successful <see cref="Start"/>.</summary>
     internal IClipboardDecisionScopeLifecycle? Lifecycle => _lifecycle;
 
+    /// <summary>PRIVON v0.2.1 Gate 3C -- reachable once <see cref="Start"/> has completed
+    /// successfully, for <see cref="PrivonAppUiBridge.CreateProduction"/> to construct the ONE
+    /// <see cref="SettingsCoordinator"/> against -- never a second, independently-constructed
+    /// service over a different <see cref="PrivonLocalStore"/> instance. <see langword="null"/>
+    /// before a successful <see cref="Start"/>.</summary>
+    internal ProtectionCategorySettingsService? CategorySettingsService => _categorySettingsService;
+
+    /// <summary>PRIVON v0.2.1 Gate 3C -- reachable once <see cref="Start"/> has completed
+    /// successfully, for the SAME reason as <see cref="CategorySettingsService"/>.
+    /// <see langword="null"/> before a successful <see cref="Start"/>.</summary>
+    internal UserExceptionService? SettingsUserExceptionService => _userExceptionService;
+
+    /// <summary>PRIVON v0.2.1 Gate 3C -- the Settings UI's own honest degraded-state signal, sourced
+    /// directly from <see cref="PrivonLocalStore.IsMasterKeyUnavailable"/> (no duplicate source of
+    /// truth). <see langword="false"/> before a successful <see cref="Start"/> -- there is nothing
+    /// degraded to report about a composition root that never finished constructing its Storage
+    /// layer at all.</summary>
+    internal bool IsMasterKeyUnavailable => _store?.IsMasterKeyUnavailable ?? false;
+
     /// <summary>
     /// Single-use, matching every other <c>Start</c> in this codebase's own exact precedent (e.g.
     /// <see cref="ClipboardChangeMonitor.Start"/>/<see cref="ClipboardPrivacyCoordinator.Start"/>) --
@@ -344,8 +377,17 @@ internal sealed class PrivonAppComposition : IDisposable
     private void BuildGraph()
     {
         var store = PrivonLocalStore.OpenOrCreate(_storageRootPath);
+        _store = store;
         var trustExceptionProvider = new TrustExceptionProvider(store);
-        var processor = new ClipboardPrivacyProcessor(trustExceptionProvider);
+        var categorySettingsProvider = new ProtectionCategorySettingsProvider(store);
+        var userExceptionProvider = new UserExceptionProvider(store);
+        var processor = new ClipboardPrivacyProcessor(trustExceptionProvider, categorySettingsProvider, userExceptionProvider);
+
+        // PRIVON v0.2.1 Gate 3C -- the SAME store instance backs both the read-only providers above
+        // (consumed by the clipboard-privacy pipeline) and these mutation-capable services (consumed
+        // only by the Settings UI) -- never a second, independently-opened PrivonLocalStore.
+        _categorySettingsService = new ProtectionCategorySettingsService(store);
+        _userExceptionService = new UserExceptionService(store);
 
         _operationGate = new ClipboardOperationGate();
         _lifecycle = new ClipboardDecisionScopeLifecycle();
@@ -459,6 +501,9 @@ internal sealed class PrivonAppComposition : IDisposable
         _lifecycle = null;
         _operationGate = null;
         _diagnostics = null;
+        _categorySettingsService = null;
+        _userExceptionService = null;
+        _store = null;
     }
 
     /// <summary>

@@ -34,17 +34,27 @@ namespace Privon.App;
 /// Phase 0.2I adds exactly one more menu item -- a checkable "Windows 시작 시 자동 실행" toggle,
 /// placed above a separator from the pre-existing Exit item -- and nothing else; still no
 /// dashboard, no settings window.
+///
+/// PRIVON v0.2.1 Gate 3C adds exactly one more menu item -- "Settings..." -- placed above the same
+/// separator, alongside the auto-start toggle, so the destructive Exit command stays visually
+/// isolated below its own separator. No new tray icon, no new process/launcher -- opening Settings
+/// routes through the SAME <see cref="PrivonAppUiBridge"/>-owned dispatcher hand-off as every other
+/// tray command here.
 /// </summary>
 internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
 {
     private readonly NotifyIcon _icon;
     private readonly ContextMenuStrip _menu;
+    private readonly ToolStripMenuItem _settingsItem;
     private readonly ToolStripMenuItem _autoStartItem;
     private readonly ToolStripMenuItem _exitItem;
     private bool _disposed;
 
     public WinFormsTrayIconSurface()
     {
+        _settingsItem = new ToolStripMenuItem("Settings...");
+        _settingsItem.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
+
         // CheckOnClick is deliberately false -- the coordinator, not this menu item itself, decides
         // the final checked state AFTER a real enable/disable attempt actually succeeds or fails
         // (see ITrayIconSurface.SetAutoStartChecked's own doc). If CheckOnClick were true, WinForms
@@ -58,6 +68,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
         _menu = new ContextMenuStrip();
+        _menu.Items.Add(_settingsItem);
         _menu.Items.Add(_autoStartItem);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(_exitItem);
@@ -73,6 +84,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
 
     public event EventHandler? ExitRequested;
     public event EventHandler? AutoStartToggleRequested;
+    public event EventHandler? SettingsRequested;
 
     public void Show()
     {
@@ -98,6 +110,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _icon.Visible = false;
         _icon.Dispose();
         _menu.Dispose();
+        _settingsItem.Dispose();
         _autoStartItem.Dispose();
         _exitItem.Dispose();
     }

@@ -36,6 +36,7 @@ master.key
 settings.bin
 trusted-public-info.bin
 exceptions.bin
+user-exceptions.bin
 
 # --- Editor / IDE local state --------------------------------------------------
 .vs/

@@ -30,10 +30,45 @@ internal interface IForegroundTargetSource
     bool TryGetWindowThreadProcessId(nint hwnd, out uint processId);
 
     /// <summary>
-    /// Resolves the executable's process name for a given PID. Returns false for any ordinary
-    /// failure to resolve it -- most notably the process having exited between the caller
-    /// capturing its PID and this lookup running, which is an expected race, not a crash.
-    /// <paramref name="processName"/> is null whenever this returns false.
+    /// BUG-004 Gate 2H.3 (E+) -- the ONE identity-resolution primitive. Resolves the process name
+    /// AND the Windows package-identity fact for <paramref name="expectedProcessId"/> from a SINGLE
+    /// native process handle, and -- while that handle is STILL OPEN -- re-confirms that the current
+    /// foreground process is still that same pinned process. Returns <see langword="false"/> if any
+    /// step fails or the confirmation does not hold.
+    ///
+    /// SAME_HANDLE_BINDING (Gate 2H.3, corrected): the production implementation MUST open one
+    /// native handle FIRST and derive both facts from it. It must NOT use
+    /// <c>System.Diagnostics.Process.ProcessName</c> as one half of the pair: that property and
+    /// <c>Process.Handle</c> are two INDEPENDENT PID-keyed lookups, so the two facts could straddle
+    /// a PID-reuse boundary and describe two different process instances. (A Gate 2F doc comment
+    /// claimed the opposite; that claim was empirically disproven -- creating 271 <c>Process</c>
+    /// objects and reading <c>ProcessName</c> added 2 handles to the caller, while forcing
+    /// <c>.Handle</c> on those same objects added 131 -- and has been removed.)
+    ///
+    /// FOREGROUND_CONFIRMATION (Gate 2H.3): opening one handle makes the two facts coherent with ONE
+    /// process instance, but does not by itself prove that instance is still FOREGROUND -- the PID
+    /// could have been reassigned between reading it from the foreground window and opening it.
+    /// The confirmation therefore re-reads the current foreground PID while the handle is still open;
+    /// because an open handle keeps that process object (and its identifier) alive, a matching PID at
+    /// that instant provably refers to the same pinned instance. The window HANDLE is deliberately
+    /// NOT compared -- a different window of the same process is acceptable, so HWND never becomes
+    /// identity policy.
+    ///
+    /// FACTS_ONLY: this method knows no product policy. It never compares against any supported
+    /// package family name -- that decision belongs exclusively to <c>Privon.App</c>'s TargetGate.
+    ///
+    /// On <see langword="false"/>: <paramref name="processName"/> is <see langword="null"/>,
+    /// <paramref name="packageIdentity"/> is <see cref="PackageIdentityResolution.Unresolved"/>, and
+    /// <paramref name="packageFamilyName"/> is <see langword="null"/>. On <see langword="true"/>,
+    /// <paramref name="packageIdentity"/> independently reports whether the package lookup succeeded
+    /// (<see cref="PackageIdentityResolution.Resolved"/>), definitively found no package
+    /// (<see cref="PackageIdentityResolution.NoPackage"/> -- an ordinary, successful fact for an
+    /// unpackaged process), or was inconclusive (<see cref="PackageIdentityResolution.Unresolved"/>);
+    /// the last two are never conflated.
     /// </summary>
-    bool TryGetProcessName(uint processId, out string? processName);
+    bool TryResolveConfirmedForegroundIdentity(
+        uint expectedProcessId,
+        out string? processName,
+        out PackageIdentityResolution packageIdentity,
+        out string? packageFamilyName);
 }

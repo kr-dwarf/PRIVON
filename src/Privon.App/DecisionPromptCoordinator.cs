@@ -21,8 +21,9 @@ namespace Privon.App;
 /// evidence that <paramref name="scope"/> (any use of that word in this doc) is still active --
 /// by the time <see cref="HandleScopeOnDispatcher"/> actually runs (after however long the
 /// dispatcher took), the scope may already have been superseded. <see cref="IClipboardDecisionScopeLifecycle.IsActive"/>
-/// is rechecked there, on the SAME concrete lifecycle instance a future composition root gives
-/// both this type and <see cref="ClipboardDecisionSessionPublisher"/>/<see cref="ClipboardDecisionActionResolver"/>
+/// is rechecked there, on the SAME concrete lifecycle instance <see cref="PrivonAppComposition.BuildGraph"/>
+/// creates and <see cref="PrivonAppUiBridge"/> shares with both this type and
+/// <see cref="ClipboardDecisionSessionPublisher"/>/<see cref="ClipboardDecisionActionResolver"/>
 /// -- if false, the notification is dropped silently: no dialog is shown, nothing is resolved.
 ///
 /// ONE_CURRENT_PROMPT (Phase 3C STEP40 instruction, frozen): at most one <see cref="IDecisionPromptSurface"/>

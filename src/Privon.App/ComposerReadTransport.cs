@@ -9,11 +9,10 @@ namespace Privon.App;
 /// its own -- mirrors <see cref="ClipboardReadTransport"/>/<see cref="ClipboardWriteTransport"/>'s
 /// own exact shape.
 ///
-/// Not yet constructed by any live composition root (this STEP explicitly does not wire
-/// <c>App.xaml.cs</c>). A future composition root that wants to share the SAME
-/// <see cref="ComposerTextReader"/> instance across multiple consumers must pass one already-owned
-/// instance to the internal constructor overload -- never let the public parameterless constructor
-/// create a second, separate one.
+/// Constructed by the live composition root -- see <see cref="PrivonAppComposition.BuildGraph"/>,
+/// which shares the SAME <see cref="ComposerTextReader"/> instance across its consumers by passing
+/// one already-owned instance to this type's internal constructor overload -- never the public
+/// parameterless constructor, which would create a second, separate one.
 /// </summary>
 internal sealed class ComposerReadTransport : IComposerReadTransport, IDisposable
 {

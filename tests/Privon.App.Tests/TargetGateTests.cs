@@ -5,24 +5,41 @@ using Privon.Windows;
 namespace Privon.App.Tests;
 
 // Phase 3B STEP2 -- APP_TARGET_GATE regression. TargetGate is a pure function -- no fakes needed.
+//
+// BUG-004 Gate 2G: the two positive tests below (and this file's own SupportedPfn/SupportedChatGptSnapshot
+// helpers) were migrated from the OLD, defective, name-only supported contract to the current one --
+// see TargetGate's own SUPPORTED_IDENTITY_0_2_1 doc. Every OTHER test in this file is a NEGATIVE
+// case (unrelated process, browser, unresolved, null/empty name) whose whole point is that the
+// target must NOT be authorized -- none of those needed migration, since strengthening the policy
+// can only ever keep a negative case negative, never flip it positive.
 public class TargetGateTests
 {
-    // ---- 1. resolved "ChatGPT" -> true ----
+    // The ONE current approved product identity (Gate 2E/2E.1, locally + Store-catalog verified) --
+    // duplicated here deliberately, as its own named constant, rather than reflecting into
+    // TargetGate's private field: this test file should fail loudly if the production constant
+    // ever drifts from what this suite believes is approved, not silently track it.
+    private const string SupportedPfn = "OpenAI.Codex_2p2nqsd0c76g0";
+
+    private static ForegroundTargetSnapshot SupportedChatGptSnapshot(string processName = "ChatGPT", uint processId = 4242) =>
+        new(IsResolved: true, ProcessId: processId, ProcessName: processName,
+            PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: SupportedPfn);
+
+    // ---- 1. resolved "ChatGPT" + the approved current package identity -> true ----
     [Fact]
-    public void IsSupportedTarget_ResolvedChatGpt_ReturnsTrue()
+    public void IsSupportedTarget_ResolvedChatGptWithApprovedPackageIdentity_ReturnsTrue()
     {
-        var snapshot = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+        var snapshot = SupportedChatGptSnapshot();
         Assert.True(TargetGate.IsSupportedTarget(snapshot));
     }
 
-    // ---- 2/3. casing differences -> still true (OrdinalIgnoreCase) ----
+    // ---- 2/3. casing differences -> still true (OrdinalIgnoreCase), approved package identity present ----
     [Theory]
     [InlineData("chatgpt")]
     [InlineData("CHATGPT")]
     [InlineData("ChAtGpT")]
-    public void IsSupportedTarget_CasingVariants_ReturnsTrue(string processName)
+    public void IsSupportedTarget_CasingVariantsWithApprovedPackageIdentity_ReturnsTrue(string processName)
     {
-        var snapshot = new ForegroundTargetSnapshot(IsResolved: true, ProcessId: 4242, ProcessName: processName);
+        var snapshot = SupportedChatGptSnapshot(processName);
         Assert.True(TargetGate.IsSupportedTarget(snapshot));
     }
 
@@ -89,5 +106,53 @@ public class TargetGateTests
             .ToList();
 
         Assert.Empty(offendingTypeNames);
+    }
+
+    // ==================================================================
+    // UI-019 (PRIVON v0.2.1 Gate 3C) -- the Settings window's own real foreground process/package
+    // identity can never satisfy TargetGate. Not a new branch -- a regression lock proving the
+    // EXISTING exact-package-identity contract (already exhaustive: ONLY the one approved ChatGPT
+    // package identity passes -- see SUPPORTED_IDENTITY_0_2_1) structurally covers this new window
+    // too, without TargetGate itself needing (or getting) any Settings-specific change.
+    // ==================================================================
+    [Theory]
+    [InlineData("PRIVON")]
+    [InlineData("Privon.App")]
+    [InlineData("Settings")]
+    public void IsSupportedTarget_SettingsOrAppOwnProcessIdentity_NeverSatisfiesTargetGate(string processName)
+    {
+        // Even granting the maximally-favorable (and factually wrong) assumption that this
+        // process's own package identity happened to equal the ONE approved ChatGPT PFN, a
+        // non-"ChatGPT" process name alone already fails -- proving the process-name pre-filter
+        // alone is sufficient to reject PRIVON's own windows, with no dependency on package identity
+        // at all.
+        var snapshot = new ForegroundTargetSnapshot(
+            IsResolved: true, ProcessId: 9999, ProcessName: processName,
+            PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: SupportedPfn);
+
+        Assert.False(TargetGate.IsSupportedTarget(snapshot));
+    }
+
+    [Fact]
+    public void TargetGateSource_NeverReferencesSettingsOrPrivonAsASupportedIdentity()
+    {
+        var source = File.ReadAllText(FindAppSourceFile("TargetGate.cs"));
+        Assert.DoesNotContain("\"PRIVON\"", source);
+        Assert.DoesNotContain("\"Settings\"", source);
+        Assert.DoesNotContain("SettingsWindow", source);
+    }
+
+    private static string FindAppSourceFile(string fileName)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src", "Privon.App")))
+        {
+            dir = dir.Parent;
+        }
+
+        if (dir is null)
+            throw new InvalidOperationException("Could not locate src/Privon.App from the test output directory.");
+
+        return Path.Combine(dir.FullName, "src", "Privon.App", fileName);
     }
 }

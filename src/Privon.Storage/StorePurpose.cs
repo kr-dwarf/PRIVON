@@ -20,5 +20,10 @@ public static class StorePurpose
     public const string TrustedPublicInfo = "PRIVON.TrustedPublicInfo.v2";
     public const string Exceptions = "PRIVON.Exceptions.v2";
 
+    // PRIVON v0.2.1 Gate 3B -- UserExceptionDictionary's own distinct purpose/AAD, deliberately
+    // separate from Exceptions/TrustedPublicInfo above: a genuinely different persisted concept
+    // (see UserExceptionEntry's own doc), never sharing ciphertext binding with either.
+    public const string UserExceptions = "PRIVON.UserExceptions.v1";
+
     public static byte[] ToAad(string purpose) => Encoding.UTF8.GetBytes(purpose);
 }

@@ -37,28 +37,13 @@ public sealed class ForegroundTargetInspector
     }
 
     /// <summary>
-    /// CAPTURE_FLOW: GetForegroundWindow -> GetWindowThreadProcessId -> process-name-by-PID, using
-    /// the CURRENT PID at each step -- never a cached/enumerated PID set
-    /// (PRODUCTION_TARGET_PID_STRATEGY). Any ordinary failure at any step (no foreground window,
-    /// unresolved/zero PID, or the process having exited before its name could be looked up)
-    /// short-circuits to an unresolved snapshot -- never a stale prior snapshot, never a guess.
-    /// Never throws for an ordinary condition; never calls any clipboard content API.
+    /// BUG-004 Gate 2H.3 (E+): a one-line delegation to <see cref="ForegroundIdentityCapture.TryCapture"/>,
+    /// the single coherent-capture primitive this assembly's guarded transports also use -- so
+    /// authorization-time capture and every execution-time guard can never diverge. See that type
+    /// for the full CAPTURE_FLOW / FACT_CAPTURE_LINEARIZATION_POINT contract. Any ordinary failure
+    /// yields an unresolved snapshot; never a stale prior snapshot, never a guess. Never throws for
+    /// an ordinary condition; never calls any clipboard content API.
     /// </summary>
-    public ForegroundTargetSnapshot Capture()
-    {
-        nint hwnd = _source.GetForegroundWindow();
-        if (hwnd == 0)
-            return default;
-
-        // A defensive processId==0 check here, in addition to a false return, means this type
-        // never trusts a zero PID as valid even if a (buggy or future) IForegroundTargetSource
-        // implementation ever reported success alongside one -- 0 is never a real process ID.
-        if (!_source.TryGetWindowThreadProcessId(hwnd, out uint processId) || processId == 0)
-            return default;
-
-        if (!_source.TryGetProcessName(processId, out string? processName))
-            return default;
-
-        return new ForegroundTargetSnapshot(IsResolved: true, ProcessId: processId, ProcessName: processName);
-    }
+    public ForegroundTargetSnapshot Capture() =>
+        ForegroundIdentityCapture.TryCapture(_source, out var snapshot) ? snapshot : default;
 }

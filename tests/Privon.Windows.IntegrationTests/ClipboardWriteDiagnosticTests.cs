@@ -20,6 +20,10 @@ public class ClipboardWriteDiagnosticTests
     {
         var native = new FakeClipboardMonitorNative { UnicodeTextAvailable = true, SequenceNumber = DefaultSequence };
         var textNative = new FakeClipboardTextNative();
+        // BUG-006: default original-content baseline -- see ClipboardChangeMonitorWriteTests's own
+        // CreateStarted for the full rationale. Individual tests still override via
+        // OverridePayloadOnSet/CorruptPayloadOnSet for what the VERIFICATION read-back sees.
+        textNative.SetUnicodeTextPayload("ORIGINAL-CLIPBOARD-TEXT");
         var monitor = new ClipboardChangeMonitor(native, textNative: textNative);
         monitor.Start();
         return (monitor, native, textNative);

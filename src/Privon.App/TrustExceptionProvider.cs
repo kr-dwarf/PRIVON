@@ -7,8 +7,10 @@ namespace Privon.App;
 /// Phase 3B STEP6 -- the only production implementation of <see cref="ITrustExceptionProvider"/>.
 /// Wraps an already-open <see cref="PrivonLocalStore"/>, injected by the caller -- this type
 /// never calls <see cref="PrivonLocalStore.OpenOrCreate"/> itself. APP_COMPOSITION_ROOT_STORAGE_PATH
-/// (where the root directory for that store comes from) remains a separate, still-open decision
-/// for a future composition-root step; this type is deliberately agnostic to it.
+/// (where the root directory for that store comes from) is frozen by
+/// <see cref="PrivonAppComposition.ProductionStorageRootPath"/>; this type remains deliberately
+/// agnostic to it -- it only ever receives an already-open <see cref="PrivonLocalStore"/> from its
+/// caller.
 ///
 /// CACHE_POLICY (Phase 3B STEP5 audit, confirmed here): <see cref="Load"/> re-reads
 /// <see cref="PrivonLocalStore.LoadTrustedPublicInfo"/>/<see cref="PrivonLocalStore.LoadExceptions"/>
