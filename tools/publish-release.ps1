@@ -201,24 +201,49 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # 1. Clean only this script's own release staging/output directory.
-    #    Nothing else in the repository is touched or deleted. Unrelated to
-    #    source isolation -- $ReleaseDir/$StagingDir remain under the
-    #    primary $RepoRoot as a plain output destination; BUG-005 only ever
-    #    concerned what gets READ as build INPUT, never where output is
-    #    written. A fresh worktree also starts with no bin/obj of its own
-    #    (git never tracks them -- see .gitignore), so this step and step
-    #    0d together guarantee no stale/incremental output from any prior
-    #    build, in either the source or the destination, can survive into
-    #    this run.
+    # 1. RPT-010 correction: clean ONLY this run's own disposable/current-
+    #    version output -- $StagingDir (always disposable, rebuilt fresh
+    #    every run) and the EXACT current-version $ZipPath/$Sha256Path (so a
+    #    stale same-version ZIP/checksum left over from an earlier failed or
+    #    aborted run can never be mistaken for this run's fresh success).
+    #    Previously this step recursively deleted the ENTIRE $ReleaseDir --
+    #    which silently destroyed every differently-versioned historical
+    #    artifact (release/PRIVON-<older-version>-win-x64.zip and its own
+    #    .sha256) sitting alongside it, with no way to recover them short of
+    #    re-packaging that older version from source. Nothing else under
+    #    $ReleaseDir is ever touched or deleted by this step -- no wildcard,
+    #    no directory-wide removal; the preservation of every other file is
+    #    structural (this step only ever names $StagingDir/$ZipPath/
+    #    $Sha256Path), never a naming-convention accident. A fresh worktree
+    #    also starts with no bin/obj of its own (git never tracks them --
+    #    see .gitignore), so this step and step 0d together still guarantee
+    #    no stale/incremental BUILD output, in either the source or the
+    #    destination, can survive into this run.
+    #
+    #    STALE_OUTPUT_TIMING (frozen): both exact current-version outputs are
+    #    removed HERE, before publish even runs -- never delayed until after
+    #    a successful ZIP/checksum. If this run fails anywhere between here
+    #    and checksum self-verification, there is no old same-version
+    #    ZIP/checksum left behind that could look like this run's own
+    #    (possibly nonexistent) success.
     # -----------------------------------------------------------------------
 
-    Write-Step "Cleaning release staging directory (release/ only)"
-    if (Test-Path $ReleaseDir) {
-        Remove-Item -Path $ReleaseDir -Recurse -Force
+    Write-Step "Cleaning this run's own disposable/current-version output"
+    if (Test-Path $StagingDir) {
+        Remove-Item -Path $StagingDir -Recurse -Force
+    }
+    if (Test-Path $ZipPath) {
+        Remove-Item -Path $ZipPath -Force
+    }
+    if (Test-Path $Sha256Path) {
+        Remove-Item -Path $Sha256Path -Force
+    }
+    if (-not (Test-Path $ReleaseDir)) {
+        New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
     }
     New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
-    Write-Info "Recreated: $ReleaseDir"
+    Write-Info "Cleared (if present): $StagingDir, $(Split-Path -Leaf $ZipPath), $(Split-Path -Leaf $Sha256Path)"
+    Write-Info "Recreated: $StagingDir"
 
     # -----------------------------------------------------------------------
     # 2. Run the verified publish command -- against the ISOLATED worktree's
