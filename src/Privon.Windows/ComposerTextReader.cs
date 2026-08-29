@@ -324,27 +324,21 @@ public sealed class ComposerTextReader : IDisposable
         }
     }
 
-    // FOREGROUND_GUARD core -- an intentional, narrow duplicate of ClipboardChangeMonitor's own
-    // private CheckForegroundTarget, built on the SAME shared IForegroundTargetSource type (no new
-    // P/Invoke). Fresh, uncached, every call. Comparison is PID equality AND
-    // ordinal-case-insensitive process-name equality -- nothing else. This type does not know
-    // "ChatGPT" or any other product policy name.
+    // FOREGROUND_GUARD core -- BUG-004 Gate 2H.3 (E+): no longer a hand-rolled duplicate of
+    // ClipboardChangeMonitor's own guard. Both now obtain a FRESH coherent current-foreground
+    // identity through the ONE shared ForegroundIdentityCapture primitive and compare all four
+    // identity facts, so the two transports can never again drift apart (the previous local copies
+    // had both silently weakened to PID+ProcessName-only -- BUG004-TOCTOU-001). Fresh, uncached,
+    // every call. This type still does not know "ChatGPT", any package family name, or any other
+    // product policy -- it compares CURRENT against the caller's EXPECTED snapshot only.
     private ForegroundGuardResult CheckForegroundTarget(ForegroundTargetSnapshot expected)
     {
-        nint hwnd = _foregroundSource.GetForegroundWindow();
-        if (hwnd == 0)
+        if (!ForegroundIdentityCapture.TryCapture(_foregroundSource, out var current))
             return ForegroundGuardResult.Unavailable;
 
-        if (!_foregroundSource.TryGetWindowThreadProcessId(hwnd, out uint processId) || processId == 0)
-            return ForegroundGuardResult.Unavailable;
-
-        if (!_foregroundSource.TryGetProcessName(processId, out string? processName) || string.IsNullOrWhiteSpace(processName))
-            return ForegroundGuardResult.Unavailable;
-
-        bool matches = processId == expected.ProcessId
-            && string.Equals(processName, expected.ProcessName, StringComparison.OrdinalIgnoreCase);
-
-        return matches ? ForegroundGuardResult.Matched : ForegroundGuardResult.Changed;
+        return ForegroundIdentityCapture.Matches(current, expected)
+            ? ForegroundGuardResult.Matched
+            : ForegroundGuardResult.Changed;
     }
 
     private enum ForegroundGuardResult { Unavailable, Changed, Matched }

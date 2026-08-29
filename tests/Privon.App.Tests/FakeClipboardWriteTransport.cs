@@ -23,9 +23,25 @@ internal sealed class FakeClipboardWriteTransport : IClipboardWriteTransport
     /// failure/throw.</summary>
     public Exception? ThrowOnWrite { get; set; }
 
+    /// <summary>
+    /// BUG-002 Gate 2B -- per-call scripted results, additive and empty by default (so every
+    /// pre-Gate-2B test keeps the exact single-value <see cref="NextResult"/> behavior). When
+    /// non-empty, each write call consumes the next scripted result in order; once exhausted,
+    /// behavior falls back to <see cref="NextResult"/> exactly as before.
+    /// </summary>
+    public void ScriptWriteResults(params ClipboardWriteResult[] results)
+    {
+        foreach (var result in results)
+            _scriptedWrites.Enqueue(result);
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<ClipboardWriteResult> _scriptedWrites = new();
+
     public Task<ClipboardWriteResult> WriteTextIfSequenceMatchesAsync(
         ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText)
     {
+        var result = _scriptedWrites.TryDequeue(out var scripted) ? scripted : NextResult;
+
         // ORDERING_HAZARD (Stabilization Gate, post-Phase-0.2E): CallCount is written LAST,
         // strictly after every other field a caller might read once it observes CallCount having
         // incremented -- a coordinator test that polls CallCount via WaitUntilAsync on this
@@ -42,6 +58,6 @@ internal sealed class FakeClipboardWriteTransport : IClipboardWriteTransport
         if (ThrowOnWrite is { } ex)
             throw ex;
 
-        return Task.FromResult(NextResult);
+        return Task.FromResult(result);
     }
 }

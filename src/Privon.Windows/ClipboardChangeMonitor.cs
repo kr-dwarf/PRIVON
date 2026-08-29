@@ -61,6 +61,54 @@ public sealed class ClipboardChangeMonitor : IDisposable
     /// </summary>
     internal static readonly TimeSpan StopTimeoutContractDefault = TimeSpan.FromSeconds(5);
 
+    // BUG-006 GLOBAL_ROLLBACK_SLOT (process-wide, not per-instance): a quarantined rollback handle
+    // must remain reachable even if the ClipboardChangeMonitor instance that created it is later
+    // disposed and collected -- reachability here is deliberately independent of any single
+    // instance's own lifetime (see TryResolveQuarantineAtShutdown's own doc). Exactly one
+    // PRIVON-owned, potentially-RAW-bearing rollback allocation may exist across the ENTIRE process
+    // at any time; this slot is the sole mechanism that enforces that bound. Guarded exclusively via
+    // Interlocked -- see TryAdmitWrite/ResolveOrQuarantineRollbackHandle for the full protocol and
+    // the memory-ordering argument for why plain reads of the handle/byteLength pair are safe only
+    // immediately after a successful CompareExchange transition into/out of SlotQuarantined.
+    internal const int SlotEmpty = 0;
+    internal const int SlotReserved = 1;
+    internal const int SlotQuarantined = 2;
+    private static int s_slotState;
+    private static nint s_quarantinedHandle;
+    private static int s_quarantinedByteLength;
+
+    // BUG-006 test-only introspection/reset seam. The slot is process-wide by design (see its own
+    // doc above), so tests that deliberately drive it into Quarantined/Reserved must be able to
+    // observe and reset it -- production code never calls any of these three members.
+    internal static int GlobalRollbackSlotStateForTests => Volatile.Read(ref s_slotState);
+    internal static nint QuarantinedHandleForTests => s_quarantinedHandle;
+    internal static int QuarantinedByteLengthForTests => s_quarantinedByteLength;
+
+    internal static void ResetGlobalRollbackSlotForTests()
+    {
+        Interlocked.Exchange(ref s_slotState, SlotEmpty);
+        s_quarantinedHandle = 0;
+        s_quarantinedByteLength = 0;
+    }
+
+    // BUG-006 test-only seam: forces the slot to Reserved without going through TryAdmitWrite --
+    // lets a test deterministically simulate "some other actor already owns the slot" (e.g. a
+    // concurrent writer) when proving that shutdown's own resolution attempt correctly backs off
+    // rather than touching a quarantine it does not itself own.
+    internal static void ForceReservedForTests() => Interlocked.Exchange(ref s_slotState, SlotReserved);
+
+    // BUG-006 test-only seam: publishes a specific handle/byteLength as Quarantined directly,
+    // without requiring a real catastrophic write failure to produce one -- lets tests exercise
+    // write-admission/shutdown resolution against a known, controlled quarantine entry.
+    internal static void ForceQuarantinedForTests(nint handle, int byteLength)
+    {
+        s_quarantinedHandle = handle;
+        s_quarantinedByteLength = byteLength;
+        Interlocked.Exchange(ref s_slotState, SlotQuarantined);
+    }
+
+    private enum SlotAdmission { Busy, ReservedFresh, ReservedForCleanup }
+
     private readonly IClipboardMonitorNative _native;
     private readonly IClipboardTextNative _textNative;
     private readonly IForegroundTargetSource _foregroundSource;
@@ -535,6 +583,18 @@ public sealed class ClipboardChangeMonitor : IDisposable
                 DrainPendingWritesAsNotRunning();
             }
 
+            // BUG-006: one opportunistic, best-effort attempt to resolve a process-wide quarantined
+            // rollback handle as part of this monitor's own shutdown -- never a retry loop, never a
+            // new thread/timer. Safe here because this instance's own message loop has already
+            // fully drained (no in-flight write of THIS instance can still be running), matching the
+            // write-admission path's own exclusivity discipline. See its own doc for the full
+            // cross-instance/shutdown-vs-write contract. Deliberately swallowed: this is a
+            // best-effort opportunistic step for a handle that may not even belong to this
+            // instance (the slot is process-wide) -- it must never be allowed to throw and skip the
+            // mandatory listener/window/class teardown immediately below, which every caller of
+            // Stop()/Dispose() already depends on actually running.
+            try { TryResolveQuarantineAtShutdown(); } catch { /* best-effort only -- see above */ }
+
             // Reverse-order cleanup, and only for steps that actually succeeded -- listener
             // removed before the window is destroyed, window destroyed before the class is
             // unregistered, matching the required teardown order exactly.
@@ -1003,6 +1063,209 @@ public sealed class ClipboardChangeMonitor : IDisposable
         return true;
     }
 
+    // BUG-006 (exception-atomic correction, supersedes the earlier fill-late design): reads the
+    // CURRENT CF_UNICODETEXT content -- reusing the exact same TryReadUnicodeTextBody helper
+    // ReadWhileClipboardOpen/VerifyWhileClipboardOpen already share -- allocates a correctly-sized
+    // rollback buffer, and FULLY copies the RAW content into it, ALL entirely BEFORE EmptyClipboard
+    // is ever called. PRE_DESTRUCTIVE_ROLLBACK (frozen intent): no exception-capable RAW native
+    // copy may remain after crossing the destructive boundary -- correctness/data-loss resistance
+    // outranks the earlier microseconds-scale reduction in RAW native-memory lifetime the fill-late
+    // design traded for. Deliberately does NOT resolve/free `hGlobal` itself on failure (whether a
+    // false return or an exception, e.g. from Marshal.Copy) -- ownership of an allocated-but-not-
+    // fully-prepared handle is the CALLER's exception-atomic responsibility (see
+    // MutateWhileClipboardOpen's own rollbackPending/finally doc) precisely so there is exactly ONE
+    // place in this type that ever resolves a rollback handle, never two independently-written
+    // copies of that logic. `hGlobal` is only ever 0 if allocation itself never succeeded.
+    private bool TryPrepareRollbackFull(out nint hGlobal, out int byteLength, out ClipboardWriteResult failure)
+    {
+        hGlobal = 0;
+        byteLength = 0;
+
+        if (!TryReadUnicodeTextBody(out string? text, out _, out int? readError))
+        {
+            failure = ClipboardWriteResult.Failure(ClipboardWriteOutcome.NativeFailure, mutated: false, readError);
+            return false;
+        }
+
+        byte[] bytes = Encoding.Unicode.GetBytes(text! + '\0');
+        byteLength = bytes.Length;
+
+        if (!_textNative.TryGlobalAlloc((nuint)byteLength, out hGlobal, out int allocError))
+        {
+            failure = ClipboardWriteResult.Failure(ClipboardWriteOutcome.NativeFailure, mutated: false, allocError);
+            hGlobal = 0;
+            return false;
+        }
+
+        if (!_textNative.TryGlobalLock(hGlobal, out nint pointer, out int lockError))
+        {
+            failure = ClipboardWriteResult.Failure(ClipboardWriteOutcome.NativeFailure, mutated: false, lockError);
+            return false;
+        }
+
+        bool unlockOk;
+        int unlockError = 0;
+        try
+        {
+            Marshal.Copy(bytes, 0, pointer, bytes.Length);
+        }
+        finally
+        {
+            unlockOk = _textNative.TryGlobalUnlock(hGlobal, out unlockError);
+        }
+
+        if (!unlockOk)
+        {
+            failure = ClipboardWriteResult.Failure(ClipboardWriteOutcome.NativeFailure, mutated: false, unlockError);
+            return false;
+        }
+
+        failure = default;
+        return true;
+    }
+
+    // BUG-006 GLOBAL_ROLLBACK_SLOT admission (write-side): the ONLY entry point that may grant
+    // permission to create a rollback allocation. Two atomic attempts, never a spin/retry loop --
+    // a miss just means "abort this attempt," leaving a later write (via BUG-002's own existing
+    // bounded retry) to try again fresh:
+    //   (1) Quarantined -> Reserved: if a rollback handle from a PRIOR catastrophic failure (this
+    //       instance's own, or any other instance's -- the slot is process-wide) is still
+    //       unresolved, try to become the exclusive owner who gets to attempt cleaning it up.
+    //   (2) Empty -> Reserved: only if (1) did not apply, try a fresh reservation for this write's
+    //       own rollback allocation.
+    // Returning ReservedForCleanup means the caller now safely owns the ONLY reference permitted to
+    // touch s_quarantinedHandle/s_quarantinedByteLength -- the CompareExchange that produced this
+    // result is itself the memory-ordering fence that makes the subsequent PLAIN reads of those two
+    // fields safe (the publishing thread also used an Interlocked write to set SlotQuarantined, so a
+    // genuine happens-before edge exists; correctness never depends on a plain, non-Interlocked read
+    // of s_slotState anywhere in this type).
+    private static SlotAdmission TryAdmitWrite()
+    {
+        if (Interlocked.CompareExchange(ref s_slotState, SlotReserved, SlotQuarantined) == SlotQuarantined)
+            return SlotAdmission.ReservedForCleanup;
+
+        if (Interlocked.CompareExchange(ref s_slotState, SlotReserved, SlotEmpty) == SlotEmpty)
+            return SlotAdmission.ReservedFresh;
+
+        return SlotAdmission.Busy;
+    }
+
+    // BUG-006 (exception-atomic correction): one opportunistic resolution attempt for a
+    // quarantined rollback handle at monitor shutdown. Reuses the IDENTICAL Quarantined -> Reserved
+    // admission step a write uses -- a concurrent writer (this instance's own, impossible per the
+    // single-owner-thread/message-loop-drained argument above, or a DIFFERENT instance's, in a
+    // multi-monitor test scenario) that wins the same CompareExchange first simply leaves this
+    // method nothing to do; this method never touches the handle unless IT wins that same exclusive
+    // transition. Never a retry loop -- exactly one attempt, matching every other "best-effort, no
+    // new subsystem" cleanup point in this design. EXCEPTION_ATOMICITY: this method's own required
+    // try/finally state-repair shape (cleanup succeeds -> Reserved->Empty; cleanup does not ->
+    // Reserved->Quarantined with the same coherent handle/byteLength still published) is already
+    // fully provided by ResolveOrQuarantineRollbackHandle itself -- that method never throws and
+    // always leaves the slot in one of exactly those two terminal states before returning, so this
+    // call site needs no additional try/finally of its own. The outer caller (OwnerThreadMain) still
+    // wraps this call in a defensive try/catch as a final backstop, even though nothing here can
+    // actually throw by design -- mandatory listener/window/class teardown must never be skipped.
+    private void TryResolveQuarantineAtShutdown()
+    {
+        if (Interlocked.CompareExchange(ref s_slotState, SlotReserved, SlotQuarantined) != SlotQuarantined)
+            return;
+
+        nint handle = s_quarantinedHandle;
+        int byteLength = s_quarantinedByteLength;
+
+        if (ResolveOrQuarantineRollbackHandle(handle, byteLength, out _))
+            Interlocked.Exchange(ref s_slotState, SlotEmpty);
+        // else: ResolveOrQuarantineRollbackHandle has already republished the SAME handle/byteLength
+        // and transitioned back to SlotQuarantined itself -- nothing further for shutdown to do; no
+        // new write follows shutdown, so there is no "abort a write" step here.
+    }
+
+    // BUG-006 CLEANUP (exception-atomic correction): attempts to fully resolve (free) a
+    // PRIVON-owned rollback handle the caller already exclusively owns (via TryAdmitWrite's
+    // ReservedForCleanup, this write's own catastrophic failure, or shutdown). GlobalFree's own
+    // documented Microsoft contract: success returns NULL; failure returns the SAME, STILL-VALID
+    // handle -- so a failed free never invalidates `handle`, and calling GlobalFree on it again
+    // afterward is a legitimate retry, never a double-free. On a free failure, re-locks the SAME
+    // handle and overwrites its content with exactly `byteLength` zero bytes before retrying the
+    // free once. EXCEPTION_ATOMICITY: the scrub attempt (lock/zero-fill/unlock/retry-free) is
+    // wrapped so that ANY managed exception during it (e.g. Marshal.Copy) is caught here and
+    // treated identically to any other unresolved-cleanup outcome -- this method NEVER throws,
+    // matching every other native-interaction Try* helper in this type, and its own `finally`
+    // GUARANTEES the handle is published into the global quarantine slot whenever it could not be
+    // freed, regardless of WHERE inside the attempt something failed or threw. The caller MUST NOT
+    // touch `handle` again after this method returns false -- ownership has been transferred to the
+    // slot. Returns true only when the handle has been genuinely freed (no residual ownership of any
+    // kind remains).
+    private bool ResolveOrQuarantineRollbackHandle(nint handle, int byteLength, out int? win32Error)
+    {
+        bool resolved = false;
+        int? reportedError = null;
+
+        // The ENTIRE resolution attempt -- including the very first, plain GlobalFree call, not
+        // merely the scrub sub-block -- is inside this one try/catch/finally. An exception from
+        // ANY step (the first free, the scrub's lock, the zero-fill Marshal.Copy, the scrub's
+        // unlock, or the retry free) is caught identically; the finally below is what actually
+        // makes the method's own doc claim true ("regardless of WHERE inside the attempt
+        // something failed or threw").
+        try
+        {
+            if (_textNative.TryGlobalFree(handle, out int freeError))
+            {
+                resolved = true;
+            }
+            else
+            {
+                reportedError = freeError;
+
+                if (_textNative.TryGlobalLock(handle, out nint pointer, out _))
+                {
+                    try
+                    {
+                        byte[] zeros = new byte[byteLength];
+                        Marshal.Copy(zeros, 0, pointer, byteLength);
+                    }
+                    finally
+                    {
+                        // Best-effort -- content is already zeroed (or the attempt was made)
+                        // either way; an unlock failure here does not change whether the
+                        // retry-free below is attempted.
+                        _textNative.TryGlobalUnlock(handle, out _);
+                    }
+
+                    if (_textNative.TryGlobalFree(handle, out int retryFreeError))
+                        resolved = true;
+                    else
+                        reportedError = retryFreeError;
+                }
+            }
+        }
+        catch
+        {
+            // An unexpected managed exception (e.g. the zero-fill Marshal.Copy, or the initial/
+            // retry GlobalFree call itself) anywhere in this resolution attempt -- converted into
+            // an ordinary unresolved-cleanup outcome for THIS boundary (every native-interaction
+            // helper in this type reports failure via bool/out, never throws). The finally below
+            // still guarantees the handle is quarantined, never silently lost, regardless of which
+            // specific step failed or threw.
+        }
+        finally
+        {
+            if (!resolved)
+            {
+                // Still unresolved -- publish/republish into the global slot. The caller must
+                // currently hold Reserved ownership; this transfers that ownership to the slot.
+                // Runs even if the try block above is unwinding due to the caught exception, so
+                // the handle can never fall out of scope unresolved.
+                s_quarantinedHandle = handle;
+                s_quarantinedByteLength = byteLength;
+                Interlocked.Exchange(ref s_slotState, SlotQuarantined);
+            }
+        }
+
+        win32Error = resolved ? null : reportedError;
+        return resolved;
+    }
+
     // GLOBALFREE_LEAK_VISIBILITY (Phase 3A.4 STEP4, resolved): frees a still-PRIVON-owned
     // hGlobal, and if the free itself fails, that failure ALWAYS wins over primaryOutcome/
     // primaryError -- reported as NativeFailure with the FREE's own Win32 error. A cleanup
@@ -1023,10 +1286,36 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // matches does CHECK 2 (Phase 3A.5 STEP4) run -- a fresh foreground check immediately before
     // EmptyClipboard. Target and sequence are independent AND conditions: neither substitutes for
     // the other. The instant EmptyClipboard succeeds, `mutated` becomes true for every path from
-    // here on, regardless of what happens next -- this layer never caches original content for a
-    // rollback. hGlobal's ownership is resolved to exactly one outcome before this method returns:
-    // freed (PRIVON still owned it) or handed to the system (SetClipboardData succeeded, never
-    // freed again by anyone).
+    // here on, regardless of what happens next.
+    //
+    // BUG-006 fix (S2 CONFIRMED, closed) / EXCEPTION-ATOMIC CORRECTION: this layer used to never
+    // cache original content for a rollback -- if EmptyClipboard succeeded and the protected
+    // SetClipboardData then failed, the original content was permanently lost. It now reserves the
+    // process-wide GLOBAL_ROLLBACK_SLOT (TryAdmitWrite) and FULLY prepares a rollback HGLOBAL
+    // already containing the CURRENT content (TryPrepareRollbackFull) BEFORE EmptyClipboard is
+    // ever called -- PRE_DESTRUCTIVE_ROLLBACK: no exception-capable RAW native copy remains after
+    // crossing the destructive boundary. If the protected Set(B) then fails, restoring A is
+    // attempted FIRST -- strictly before any cleanup of B -- so an exception/failure while freeing
+    // B can never prevent the restoration attempt. Recovery success or failure both remain
+    // ClipboardWriteOutcome.NativeFailure -- a recovery path must NEVER report protection Success;
+    // VerifyWrite is only ever reached for a genuine Success below, so it is structurally never
+    // invoked for a recovery outcome, and the self-write suppression marker
+    // (_lastSuccessfulWriteSequence, armed only inside VerifyWrite) is therefore never armed for a
+    // restore's own SetClipboardData either.
+    //
+    // EXCEPTION_ATOMIC_SLOT_OWNERSHIP: once this call transitions the global slot to Reserved
+    // (fresh, or after resolving a prior quarantine on admission), it becomes the SOLE
+    // exception-atomic owner responsible for producing exactly one terminal state -- Reserved ->
+    // Empty or Reserved -> Quarantined -- before returning on EVERY path, including one that exits
+    // via an unhandled exception. `rollbackPending` tracks whether a PRIVON-owned, fully-prepared
+    // rollback handle currently exists and has not yet been resolved by normal code; the `finally`
+    // block is the single, unconditional fallback that resolves it (via the SAME
+    // ResolveOrQuarantineRollbackHandle used everywhere else, which itself never throws) whenever
+    // normal code never got the chance to -- whether because of an early return this method's own
+    // logic simply forgot to repair (there is none left, but the mechanism does not rely on that
+    // being true forever) or because an exception propagated out of TryPrepareRollbackFull (e.g.
+    // Marshal.Copy) before any explicit resolution ran. No return, no expected failure, and no
+    // managed exception can leave the slot silently Reserved.
     private (ClipboardWriteOutcome Outcome, bool Mutated, uint WriteSequence, int? Win32Error) MutateWhileClipboardOpen(
         long writeId, uint expectedSequence, ForegroundTargetSnapshot? expectedTarget, nint hGlobal)
     {
@@ -1058,26 +1347,185 @@ public sealed class ClipboardChangeMonitor : IDisposable
             }
         }
 
-        if (!_textNative.EmptyClipboard(out int emptyError))
+        // BUG-006 GLOBAL_ROLLBACK_SLOT: reserve exclusive process-wide ownership BEFORE any rollback
+        // allocation is ever created -- see TryAdmitWrite's own doc for why this ordering (not a
+        // later CAS at cleanup time) is what actually prevents two writers from ever both holding a
+        // RAW-bearing rollback handle at once. Every branch below that returns before reaching the
+        // try/finally further down never allocated anything, so nothing further to resolve.
+        var admission = TryAdmitWrite();
+
+        if (admission == SlotAdmission.Busy)
         {
-            var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.NativeFailure, emptyError);
+            // Another writer (this instance's own impossible by construction, or a different
+            // instance's) currently holds the slot -- abort before any rollback allocation.
+            var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.NativeFailure, null);
             return (freeOutcome, false, 0, freeErr);
         }
 
-        // DESTRUCTIVE_BOUNDARY crossed: the original clipboard content is already gone.
-        if (!_textNative.TrySetClipboardData(hGlobal, out int setError))
+        if (admission == SlotAdmission.ReservedForCleanup)
         {
-            // Set failed -- hGlobal is still ours to free.
-            var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.NativeFailure, setError);
-            return (freeOutcome, true, 0, freeErr);
+            // Safe to read plainly -- the CompareExchange that produced ReservedForCleanup is itself
+            // the memory-ordering fence (see TryAdmitWrite's own doc). ResolveOrQuarantineRollbackHandle
+            // never throws (see its own doc) -- this whole branch needs no try/finally of its own.
+            nint quarantinedHandle = s_quarantinedHandle;
+            int quarantinedByteLength = s_quarantinedByteLength;
+
+            if (!ResolveOrQuarantineRollbackHandle(quarantinedHandle, quarantinedByteLength, out int? oldQuarantineError))
+            {
+                // Still unresolved -- already republished as Quarantined inside the helper; this
+                // write's own ownership transfer is complete. Abort before any rollback allocation
+                // of its own.
+                var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.NativeFailure, oldQuarantineError);
+                return (freeOutcome, false, 0, freeErr);
+            }
+
+            // Resolved -- no Empty round-trip to redo here. TryAdmitWrite's own CompareExchange
+            // (Quarantined -> Reserved) already granted this call exclusive Reserved ownership
+            // before ResolveOrQuarantineRollbackHandle was ever invoked; that method only ever
+            // writes s_slotState on the NOT-resolved path (to publish Quarantined -- see its own
+            // doc) -- on success it deliberately leaves slot ownership exactly where TryAdmitWrite
+            // already put it. This SAME winner proceeds directly into its own new write below, with
+            // no intervening yield -- unifying this branch with SlotAdmission.ReservedFresh from
+            // this point on: both enter the try/finally below already holding Reserved.
         }
 
-        // Set succeeded -- hGlobal is now system-owned. NEVER free it again, on any path, from
-        // this point on (in this method, in ExecuteWrite, or in VerifyWrite).
-        uint writeSequence = _native.GetClipboardSequenceNumber();
-        RaiseWriteDiagnostic(new ClipboardWriteDiagnosticEvent(
-            writeId, ClipboardWriteDiagnosticKind.PostSetSequenceCaptured, null, writeSequence, null, null, null, null));
-        return (ClipboardWriteOutcome.Success, true, writeSequence, null);
+        // From here on this call exclusively owns the global rollback slot (Reserved) and is the
+        // sole exception-atomic owner of resolving it -- see this method's own EXCEPTION_ATOMIC_
+        // SLOT_OWNERSHIP doc above.
+        nint rollbackHGlobal = 0;
+        int rollbackByteLength = 0;
+        bool rollbackPending = false;
+
+        try
+        {
+            // PRE_DESTRUCTIVE_ROLLBACK: read + allocate + lock + copy + unlock A, FULLY, before
+            // EmptyClipboard is ever called.
+            //
+            // EXCEPTION_ATOMIC_ALLOCATION_WINDOW: `hGlobal`/`byteLength` are `out` parameters --
+            // true aliases to `rollbackHGlobal`/`rollbackByteLength` above -- so a successful
+            // TryGlobalAlloc deep inside TryPrepareRollbackFull is visible here IMMEDIATELY, even
+            // if a LATER step inside that same call (TryGlobalLock/Marshal.Copy/TryGlobalUnlock)
+            // then throws before the call can return normally. Without this inner try/catch,
+            // such a throw would skip BOTH assignment branches below (the `if (!...)` branch and
+            // the `rollbackPending = true` line), leaving `rollbackPending` stuck at its pre-call
+            // `false` while `rollbackHGlobal` already holds a real, still-unresolved handle -- the
+            // outer `finally` would then never resolve it, silently leaking a PRIVON-owned,
+            // possibly RAW-bearing allocation. Catching here does not suppress anything (the
+            // exception is always rethrown unchanged) -- it only re-derives `rollbackPending` from
+            // whatever `rollbackHGlobal` actually holds at the moment of the throw, exactly the
+            // same derivation the normal `!prepared` branch already uses below.
+            bool prepared;
+            ClipboardWriteResult prepFailure;
+            try
+            {
+                prepared = TryPrepareRollbackFull(out rollbackHGlobal, out rollbackByteLength, out prepFailure);
+            }
+            catch
+            {
+                rollbackPending = rollbackHGlobal != 0;
+                throw;
+            }
+
+            if (!prepared)
+            {
+                // rollbackHGlobal may be 0 (allocation itself never succeeded -- nothing to
+                // resolve) or non-zero (allocated, but lock/copy/unlock failed) -- either way,
+                // `rollbackPending` correctly reflects which via the check below, and the
+                // `finally` block resolves it uniformly.
+                rollbackPending = rollbackHGlobal != 0;
+                var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, prepFailure.Outcome, prepFailure.Win32Error);
+                return (freeOutcome, false, 0, freeErr);
+            }
+            rollbackPending = true; // fully prepared, PRIVON-owned, unlocked, ready either to be Set or resolved
+
+            if (!_textNative.EmptyClipboard(out int emptyError))
+            {
+                // EmptyClipboard itself failed -- the clipboard was never actually touched. The
+                // rollback buffer (already fully containing A) is still ours; resolve it through
+                // the SAME mechanism as every other rollback handle in this type -- NEVER simply
+                // release the slot to Empty while it remains PRIVON-owned (the exact defect this
+                // correction closes).
+                var resolved = ResolveOrQuarantineRollbackHandle(rollbackHGlobal, rollbackByteLength, out int? rbErr);
+                rollbackPending = false;
+                var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.NativeFailure, emptyError);
+                if (!resolved)
+                    return (ClipboardWriteOutcome.NativeFailure, false, 0, rbErr);
+                return (freeOutcome, false, 0, freeErr);
+            }
+
+            // DESTRUCTIVE_BOUNDARY crossed: the original clipboard content is already gone -- but
+            // a rollback handle already FULLY containing it exists, entirely within this same
+            // OpenClipboard bracket.
+            if (!_textNative.TrySetClipboardData(hGlobal, out int setError))
+            {
+                // B_FAILURE_ORDER: restoring the user's clipboard is the priority -- attempt
+                // Set(A) FIRST, strictly before touching B's own cleanup, so a failure/exception
+                // while freeing B can never prevent the restoration attempt. The out parameter is
+                // populated either way (Win32 contract), so it is captured once and used only in
+                // the failure branch below.
+                bool restoreSucceeded = _textNative.TrySetClipboardData(rollbackHGlobal, out int restoreError);
+
+                if (restoreSucceeded)
+                {
+                    // Original restored -- rollbackHGlobal is now system-owned. NEVER free it
+                    // again, on any path, from this point on. Only now does B's own cleanup run.
+                    rollbackPending = false;
+                    var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.NativeFailure, setError);
+                    return (freeOutcome, true, 0, freeErr);
+                }
+                else
+                {
+                    // S3: the restoration's own failure is the more recent, more diagnostically
+                    // relevant reason -- it is the primary reported error unless the SUBSEQUENT
+                    // rollback-cleanup attempt itself also fails, in which case that failure
+                    // supersedes it (unchanged most-recent-failure-wins precedence). B's own
+                    // cleanup result is deliberately never folded into this reported error -- B
+                    // never contains RAW content, and its own leak is the same already-accepted,
+                    // diagnostic-only, non-PII concern as everywhere else in this method (see
+                    // NON_RAW_FREE_FAILURE below) -- the PRIMARY signal for this scenario must
+                    // always be restoration status, not B's own bookkeeping.
+                    var resolved = ResolveOrQuarantineRollbackHandle(rollbackHGlobal, rollbackByteLength, out int? cleanupError);
+                    rollbackPending = false;
+                    FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.NativeFailure, setError); // B cleanup, result intentionally not surfaced
+                    if (!resolved)
+                        return (ClipboardWriteOutcome.NativeFailure, true, 0, cleanupError);
+                    return (ClipboardWriteOutcome.NativeFailure, true, 0, restoreError);
+                }
+            }
+
+            // Set(B) succeeded -- hGlobal is now system-owned. NEVER free it again, on any path,
+            // from this point on (in this method, in ExecuteWrite, or in VerifyWrite). The
+            // rollback handle was never needed; resolve it (PRIVON still owns it -- the system
+            // never saw it). A failure to free it is still surfaced (GLOBALFREE_LEAK_VISIBILITY,
+            // applied identically to every other handle in this method) even though the protected
+            // write itself already succeeded -- see this method's own class doc's
+            // NON_RAW_FREE_FAILURE note for why this uniform treatment is a deliberate, accepted
+            // simplification rather than a defect.
+            var rollbackResolved = ResolveOrQuarantineRollbackHandle(rollbackHGlobal, rollbackByteLength, out int? unusedFreeError);
+            rollbackPending = false;
+            if (!rollbackResolved)
+                return (ClipboardWriteOutcome.NativeFailure, true, 0, unusedFreeError);
+
+            uint writeSequence = _native.GetClipboardSequenceNumber();
+            RaiseWriteDiagnostic(new ClipboardWriteDiagnosticEvent(
+                writeId, ClipboardWriteDiagnosticKind.PostSetSequenceCaptured, null, writeSequence, null, null, null, null));
+            return (ClipboardWriteOutcome.Success, true, writeSequence, null);
+        }
+        finally
+        {
+            // EXCEPTION_ATOMIC_SLOT_OWNERSHIP fallback: reached on every exit from the try block
+            // above, including one propagating an exception. If normal code already resolved the
+            // rollback handle (rollbackPending == false), this is a no-op resolution attempt.
+            if (rollbackPending)
+                ResolveOrQuarantineRollbackHandle(rollbackHGlobal, rollbackByteLength, out _);
+
+            // Release Reserved -> Empty UNLESS a resolution above (just now, or earlier in the try
+            // block) already transitioned it to Quarantined. Safe to read plainly: we are the
+            // exclusive Reserved owner for the entire duration of this try/finally: no other
+            // thread can be mutating s_slotState while we hold it.
+            if (Volatile.Read(ref s_slotState) != SlotQuarantined)
+                Interlocked.Exchange(ref s_slotState, SlotEmpty);
+        }
     }
 
     // READBACK_VERIFICATION: a SEPARATE OpenClipboard/CloseClipboard bracket from the mutation
@@ -1262,22 +1710,23 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // runs on the SAME owner thread as the clipboard operation it gates, immediately adjacent to
     // that operation, with no intentional yield in between. See CHECK 1/CHECK 2 call sites for
     // exactly how "immediately adjacent" is realized for reads and writes respectively.
+    // BUG-004 Gate 2H.3 (E+): obtains a FRESH coherent current-foreground identity through the one
+    // shared ForegroundIdentityCapture primitive -- never by composing the sequence locally, which
+    // is how this guard previously drifted to a PID+ProcessName-only comparison (BUG004-TOCTOU-001).
+    // The comparison now covers every fact that participated in authorization, including the package
+    // identity, so a previously-authorized product authorization can no longer cross onto a
+    // different process that merely shares the PID and process name.
+    //
+    // FACTS_ONLY: compares CURRENT against the caller's EXPECTED snapshot. No supported package
+    // family name (or any other product constant) exists anywhere in this assembly.
     private ForegroundGuardResult CheckForegroundTarget(ForegroundTargetSnapshot expected)
     {
-        nint hwnd = _foregroundSource.GetForegroundWindow();
-        if (hwnd == 0)
+        if (!ForegroundIdentityCapture.TryCapture(_foregroundSource, out var current))
             return ForegroundGuardResult.Unavailable;
 
-        if (!_foregroundSource.TryGetWindowThreadProcessId(hwnd, out uint processId) || processId == 0)
-            return ForegroundGuardResult.Unavailable;
-
-        if (!_foregroundSource.TryGetProcessName(processId, out string? processName) || string.IsNullOrWhiteSpace(processName))
-            return ForegroundGuardResult.Unavailable;
-
-        bool matches = processId == expected.ProcessId
-            && string.Equals(processName, expected.ProcessName, StringComparison.OrdinalIgnoreCase);
-
-        return matches ? ForegroundGuardResult.Matched : ForegroundGuardResult.Changed;
+        return ForegroundIdentityCapture.Matches(current, expected)
+            ? ForegroundGuardResult.Matched
+            : ForegroundGuardResult.Changed;
     }
 
     private static ClipboardReadOutcome MapReadGuardOutcome(ForegroundGuardResult result) => result switch

@@ -22,7 +22,7 @@ namespace Privon.Windows;
 ///
 /// FAIL_CLOSED (matching this codebase's established "ordinary expected failures resolve to a
 /// typed <see langword="false"/>, never an escaping exception" convention -- e.g.
-/// <c>Win32ForegroundTargetSource.TryGetProcessName</c>): registry access can legitimately fail for
+/// <c>Win32ForegroundTargetSource.TryResolveConfirmedForegroundIdentity</c>): registry access can legitimately fail for
 /// reasons entirely outside this type's control (permission changes, corrupted hive, concurrent
 /// external deletion, ...) -- every method below catches broadly and returns <see langword="false"/>
 /// rather than letting an exception escape into caller code that never expects one from a UI-adjacent

@@ -54,11 +54,64 @@ internal sealed class FakeForegroundTargetSource : IForegroundTargetSource
         return result;
     }
 
-    public bool TryGetProcessName(uint processId, out string? processName)
+    /// <summary>
+    /// BUG-004 Gate 2H.3 -- when set, the FOREGROUND RE-CONFIRMATION step reports this PID instead
+    /// of the pinned one, simulating "the foreground moved to a different process before the
+    /// coherent capture could be accepted" (RED-ID-009). Null (the default) means the confirmation
+    /// observes the same pinned PID, so every pre-existing test is unaffected.
+    /// </summary>
+    public uint? ConfirmationForegroundProcessIdOverride { get; set; }
+
+    /// <summary>
+    /// BUG-004 Gate 2H.3 -- when false, the confirmation step cannot resolve a foreground process at
+    /// all (no foreground window, or its PID could not be resolved). Distinct from a PID mismatch.
+    /// </summary>
+    public bool ConfirmationForegroundResolvable { get; set; } = true;
+
+    public int ConfirmedIdentityCallCount { get; private set; }
+
+    // BUG-004 Gate 2F -- package-identity fields, additive: default to Unresolved/null so every
+    // pre-Gate-2F test (which never sets these) sees exactly the same values a default-initialized
+    // ForegroundTargetSnapshot already has, and ForegroundTargetInspector.Capture()'s own existing
+    // pre-Gate-2F assertions (which never inspect these two new fields) remain completely unaffected.
+    public PackageIdentityResolution PackageIdentityValue { get; set; } = PackageIdentityResolution.Unresolved;
+    public string? PackageFamilyNameValue { get; set; }
+    public PackageIdentityResolution PackageIdentityValueAfter { get; set; } = PackageIdentityResolution.Unresolved;
+    public string? PackageFamilyNameValueAfter { get; set; }
+
+    /// <summary>
+    /// BUG-004 Gate 2H.3 (E+) -- the single coherent identity resolution. Models production's own
+    /// contract: ONE synthetic "process instance" backs BOTH the process-name and package-identity
+    /// facts (never two independent lookups), and the foreground re-confirmation is applied before
+    /// any fact is handed back. Reuses the SAME ProcessNameResult/ProcessNameValue(-After) backing
+    /// fields the pre-Gate-2H.3 seam used, so every existing test that only ever configured those
+    /// keeps exercising the identical behavior.
+    /// </summary>
+    public bool TryResolveConfirmedForegroundIdentity(
+        uint expectedProcessId, out string? processName, out PackageIdentityResolution packageIdentity, out string? packageFamilyName)
     {
-        CallLog.Add(nameof(TryGetProcessName));
-        bool result = UseAfterValues ? ProcessNameResultAfter : ProcessNameResult;
-        processName = result ? (UseAfterValues ? ProcessNameValueAfter : ProcessNameValue) : null;
-        return result;
+        CallLog.Add(nameof(TryResolveConfirmedForegroundIdentity));
+        ConfirmedIdentityCallCount++;
+
+        processName = null;
+        packageIdentity = PackageIdentityResolution.Unresolved;
+        packageFamilyName = null;
+
+        // Step 3/4 -- opening the handle and deriving both facts from it.
+        bool resolved = UseAfterValues ? ProcessNameResultAfter : ProcessNameResult;
+        if (!resolved)
+            return false;
+
+        // Step 5 -- foreground re-confirmation, while the (synthetic) handle is still pinned.
+        if (!ConfirmationForegroundResolvable)
+            return false;
+        uint confirmedPid = ConfirmationForegroundProcessIdOverride ?? expectedProcessId;
+        if (confirmedPid != expectedProcessId)
+            return false;
+
+        processName = UseAfterValues ? ProcessNameValueAfter : ProcessNameValue;
+        packageIdentity = UseAfterValues ? PackageIdentityValueAfter : PackageIdentityValue;
+        packageFamilyName = UseAfterValues ? PackageFamilyNameValueAfter : PackageFamilyNameValue;
+        return true;
     }
 }

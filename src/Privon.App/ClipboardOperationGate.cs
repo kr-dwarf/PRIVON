@@ -8,17 +8,18 @@ namespace Privon.App;
 /// single-field guarantee).
 ///
 /// OPERATION_GATE_INSTANCE_IDENTITY (Phase 3B STEP22 audit, frozen): exactly ONE concrete instance
-/// of this type must exist per future App runtime, shared -- via the narrow
+/// of this type exists per App runtime, shared -- via the narrow
 /// <see cref="IClipboardOperationGate"/> interface -- by BOTH <see cref="ClipboardPrivacyCoordinator"/>
-/// and a future <c>ClipboardDecisionActionResolver</c>. Two independent instances would serialize
-/// nothing relative to each other and would silently defeat the entire point of this type. This
-/// STEP does not wire that live sharing into <c>App.xaml.cs</c> (composition is still deferred),
-/// but the type itself is already fully safe to share this way -- see
+/// and <see cref="ClipboardDecisionActionResolver"/> (see <see cref="PrivonAppComposition.BuildGraph"/>,
+/// which constructs exactly one instance and passes it to both). Two independent instances would
+/// serialize nothing relative to each other and would silently defeat the entire point of this type
+/// -- see
 /// <c>ClipboardOperationGateTests.SameGateInstance_SharedByTwoIndependentConsumers_SerializesBetweenThem</c>.
 ///
 /// Never disposed by <see cref="ClipboardPrivacyCoordinator"/> -- like
 /// <see cref="IClipboardReadTransport"/>/<see cref="IForegroundTargetCapture"/>, this is an
-/// injected, not owned, dependency; its disposal is the future composition root's responsibility.
+/// injected, not owned, dependency; its disposal is <see cref="PrivonAppComposition"/>'s own
+/// responsibility (see that type's own SHUTDOWN_ORDER doc).
 /// </summary>
 internal sealed class ClipboardOperationGate : IClipboardOperationGate, IDisposable
 {

@@ -26,8 +26,9 @@ namespace Privon.App;
 /// acts on a decision made from a stale read.
 ///
 /// Phase 3C STEP32 -- also implements <see cref="IClipboardGenerationSnapshot"/> as a THIRD narrow
-/// view on this same object (STEP30.1's frozen design): a future <c>ClipboardComposerVerifier</c>
-/// depends only on that single-member interface for generation-freshness checks, never on
+/// view on this same object (STEP30.1's frozen design): <see cref="ClipboardComposerVerifier"/>,
+/// live in production, depends only on that single-member interface for generation-freshness
+/// checks, never on
 /// <see cref="IClipboardDecisionScopeLifecycle"/>'s wider Runtime-Decision-scope surface, which it
 /// has no legitimate reason to touch. <see cref="CurrentGeneration"/>'s existing implementation
 /// (below) is unchanged -- this is purely an additional interface declaration.
@@ -44,12 +45,14 @@ namespace Privon.App;
 /// <see cref="Reset"/> unconditionally reset it to <see cref="ClipboardEvaluationState.NotEvaluated"/>
 /// in the SAME critical section as the generation increment, exactly mirroring how
 /// <see cref="_activeScope"/> is already reset there. <see cref="ClipboardDecisionScopeLifecycle"/>
-/// is not widened with a NEW narrow interface for these three methods in this STEP -- no real
-/// consumer exists yet (Phase 0.2D), and this codebase's own established convention is to carve
-/// out a narrow interface only once a genuine distinct consumer needs one (see e.g.
-/// <see cref="IClipboardGenerationSnapshot"/>'s own STEP30.1/STEP32 history) -- so they are plain
-/// <see langword="public"/> members of this <see langword="internal sealed"/> class, exactly like
-/// every other member here, dormant (called by nothing in production) until that future STEP.
+/// was not widened with a NEW narrow interface for these three methods -- this codebase's own
+/// established convention is to carve out a narrow interface only once a genuine distinct consumer
+/// needs one (see e.g. <see cref="IClipboardGenerationSnapshot"/>'s own STEP30.1/STEP32 history) --
+/// so they are plain <see langword="public"/> members of this <see langword="internal sealed"/>
+/// class, exactly like every other member here. All three are live production entry points, called
+/// by <see cref="ClipboardPrivacyCoordinator"/>'s own evaluation/retry flow (see that type's own
+/// <c>IClipboardEvaluationLifecycle</c>-typed <c>TryBeginEvaluation</c>/<c>CompleteEvaluation</c>/
+/// <c>AbandonEvaluation</c> calls) -- never dormant.
 ///
 /// TRANSITION_GUARDS (STEP59, correcting STEP58's own pseudocode): <see cref="CompleteEvaluation"/>/
 /// <see cref="AbandonEvaluation"/> require BOTH the generation match AND

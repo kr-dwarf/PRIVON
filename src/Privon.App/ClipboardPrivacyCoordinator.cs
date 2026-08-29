@@ -135,6 +135,26 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
     internal static readonly TimeSpan WorkerStopTimeoutContractDefault = TimeSpan.FromSeconds(5);
 
     /// <summary>
+    /// BUG-002 Gate 2A final contract (frozen for this STEP): the maximum number of TOTAL attempts
+    /// -- the original intake attempt plus every autonomous retry -- this coordinator will make for
+    /// one claimed generation. 3 retries maximum (4 total), fixed delay, no exponential backoff --
+    /// see <see cref="RetryDelayIntervalContractDefault"/>. Chosen as a small, deterministic,
+    /// practically-testable bound, not a latency-optimized or probability-derived value.
+    /// </summary>
+    internal const int MaxAttemptsContractDefault = 4;
+
+    /// <summary>
+    /// BUG-002 Gate 2A final contract (frozen for this STEP): the fixed pause between attempts,
+    /// applied via the injected <see cref="IClipboardRetryDelay"/> seam -- never a real
+    /// <see cref="Task.Delay(TimeSpan)"/> call directly, so the Gate 2B regression suite can drive
+    /// every retry deterministically. Worst-case total scheduled delay across the whole budget
+    /// (3 x 250ms = 750ms) stays comfortably inside <see cref="WorkerStopTimeoutContractDefault"/>
+    /// -- see <see cref="ProcessWorkItemAsync"/>'s own SHUTDOWN_LINEARIZATION doc for why no
+    /// <see cref="System.Threading.CancellationToken"/> is needed to keep shutdown bounded.
+    /// </summary>
+    internal static readonly TimeSpan RetryDelayIntervalContractDefault = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
     /// COORDINATOR_LIFECYCLE_STATE_MODEL (Phase 0.2D, STEP61): replaces the old
     /// <c>_startCalled</c>/<c>_running</c> boolean pair, which was no longer sufficient once TWO
     /// independently-ownable, independently-stoppable sources (<see cref="_transport"/> and the
@@ -166,6 +186,7 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
     private readonly IClipboardComposerVerificationInvalidation _verificationInvalidation;
     private readonly IClipboardDiagnosticRecorder _diagnostics;
     private readonly IClipboardForegroundTrigger? _foregroundTrigger;
+    private readonly IClipboardRetryDelay _retryDelay;
     private readonly Channel<ClipboardCoordinatorWorkItem> _mailbox;
     private readonly TimeSpan _workerStopTimeout;
     private readonly object _gate = new();
@@ -188,8 +209,9 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         IClipboardComposerVerificationHandoff verificationHandoff,
         IClipboardComposerVerificationInvalidation verificationInvalidation,
         IClipboardDiagnosticRecorder? diagnostics = null,
-        IClipboardForegroundTrigger? foregroundTrigger = null)
-        : this(transport, targetCapture, processor, writeTransport, notificationLifecycle, decisionSessionPublisher, operationGate, verificationHandoff, verificationInvalidation, stopTimeoutOverride: null, diagnostics: diagnostics, foregroundTrigger: foregroundTrigger)
+        IClipboardForegroundTrigger? foregroundTrigger = null,
+        IClipboardRetryDelay? retryDelay = null)
+        : this(transport, targetCapture, processor, writeTransport, notificationLifecycle, decisionSessionPublisher, operationGate, verificationHandoff, verificationInvalidation, stopTimeoutOverride: null, diagnostics: diagnostics, foregroundTrigger: foregroundTrigger, retryDelay: retryDelay)
     {
     }
 
@@ -205,7 +227,8 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         IClipboardComposerVerificationInvalidation verificationInvalidation,
         TimeSpan? stopTimeoutOverride,
         IClipboardDiagnosticRecorder? diagnostics = null,
-        IClipboardForegroundTrigger? foregroundTrigger = null)
+        IClipboardForegroundTrigger? foregroundTrigger = null,
+        IClipboardRetryDelay? retryDelay = null)
     {
         ArgumentNullException.ThrowIfNull(transport);
         ArgumentNullException.ThrowIfNull(targetCapture);
@@ -234,6 +257,11 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         // site) means the coordinator behaves EXACTLY as before -- no second source is ever
         // subscribed/started/stopped, no foreground-triggered evaluation ever happens.
         _foregroundTrigger = foregroundTrigger;
+        // BUG-002 Gate 2C -- optional, trailing: omitting this argument (every pre-Gate-2C call
+        // site) resolves to the real Task.Delay-backed ClipboardRetryDelay, giving production the
+        // real fixed 250ms interval. A test injects FakeClipboardRetryDelay to drive the retry loop
+        // in ProcessWorkItemAsync deterministically instead.
+        _retryDelay = retryDelay ?? new ClipboardRetryDelay();
         _workerStopTimeout = stopTimeoutOverride ?? WorkerStopTimeoutContractDefault;
 
         // CHANNEL_POLICY: capacity 1, DropOldest, single reader, MULTI writer (Phase 0.2D --
@@ -252,6 +280,14 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
             SingleWriter = false,
         });
     }
+
+    /// <summary>
+    /// BUG-002 Gate 2C -- the injected retry-delay seam, exposed read-only so a regression can
+    /// prove WHICH instance this coordinator holds. Consumed by exactly one call site --
+    /// <see cref="ProcessWorkItemAsync"/>'s own bounded retry loop -- immediately before every
+    /// retry attempt (never before the original, first attempt for a claimed generation).
+    /// </summary>
+    internal IClipboardRetryDelay RetryDelay => _retryDelay;
 
     /// <summary>
     /// APP_COORDINATOR_LIFECYCLE: single-use, matching <c>ClipboardChangeMonitor.Start</c>'s own
@@ -786,6 +822,49 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
     /// doc: the caller cannot distinguish which reason applied and does not need to). Only once the
     /// claim succeeds does this method hand off to the fully trigger-agnostic
     /// <see cref="RunPrivacyPipelineAsync"/>.
+    ///
+    /// BUG-002 RETRY_CONTROLLER (Gate 2C, final Gate 2A contract): after the intake claim above,
+    /// this method also owns the bounded autonomous-retry loop -- and ONLY the loop's own non-PII
+    /// bookkeeping (<paramref name="item"/>'s already-known kind, <c>claimedGeneration</c>, and an
+    /// attempt counter). It NEVER calls <see cref="IClipboardEvaluationLifecycle.CompleteEvaluation"/>/
+    /// <see cref="IClipboardEvaluationLifecycle.AbandonEvaluation"/> itself -- LIFECYCLE_OWNERSHIP
+    /// remains exclusively <see cref="RunPrivacyPipelineAsync"/>'s own (see that method's own
+    /// DIRECT_PIPELINE_FACTS doc, unchanged): each call already discharges exactly one transition
+    /// before returning its own non-PII <see cref="ClipboardAttemptOutcome"/>, so a subsequent retry
+    /// iteration only ever needs to decide whether to call it again, never to transition anything
+    /// itself. This is what makes a double-Complete/double-Abandon structurally unreachable from
+    /// this loop.
+    ///
+    /// SHUTDOWN_LINEARIZATION (Gate 2C, no new field/lock/CancellationToken): RETRY_ATTEMPT_START_LINEARIZATION_POINT
+    /// is the <c>lock (_gate)</c> critical section below that reads <see cref="_phase"/> immediately
+    /// before admitting the next attempt; SHUTDOWN_TRANSITION_LINEARIZATION_POINT is the existing
+    /// critical section in <see cref="ClaimCleanupTransition"/>/<see cref="Start"/>'s own failure
+    /// path that moves <see cref="_phase"/> off <see cref="CoordinatorPhase.Running"/> -- BOTH on the
+    /// SAME <see cref="_gate"/>, and the shutdown one always runs strictly before
+    /// <see cref="PerformCleanup"/> (and therefore before either native monitor's own <c>Stop</c> and
+    /// before <c>_mailbox.Writer.Complete()</c>). The two are therefore totally ordered: if admission
+    /// observes <see cref="CoordinatorPhase.Running"/>, shutdown has not yet begun and this attempt is
+    /// -- by this contract's own definition -- already in-flight, retaining the same existing
+    /// frozen in-flight behavior any other already-dequeued attempt already has (nothing here
+    /// interrupts it); if admission observes anything else, shutdown has already begun and NO further
+    /// target capture/read/write is admitted. No <c>await</c> or other blocking operation occurs
+    /// between a successful admission and the synchronous freshness checks immediately below it --
+    /// admission and this attempt's own intake are one linearized step relative to shutdown. The lock
+    /// is never held across the retry delay's own <c>await</c>.
+    ///
+    /// FRESHNESS_BEFORE_EVERY_RETRY (Gate 2A, unchanged by this STEP): after admission, in this exact
+    /// order -- (1) the pinned generation must still equal <see cref="IClipboardGenerationSnapshot.CurrentGeneration"/>
+    /// (a mismatch means a newer generation already exists and its own real trigger already owns a
+    /// fresh, correct attempt -- this retry stops, no special-casing needed beyond the plain compare);
+    /// (2) a FRESH <see cref="IForegroundTargetCapture.Capture"/> (never attempt N's own stale
+    /// snapshot -- TARGET_TOKEN_FLOW's "captured exactly once per attempt" applies per-attempt, and a
+    /// retry is a genuinely new attempt); (3) a fresh <see cref="TargetGate.IsSupportedTarget"/>
+    /// check against that new capture; (4) a fresh <see cref="IClipboardEvaluationLifecycle.TryBeginEvaluation"/>
+    /// re-claim of the SAME pinned generation (safe and race-free because
+    /// <see cref="IClipboardEvaluationLifecycle.AbandonEvaluation"/> already returned this generation's
+    /// evaluation state to claimable, and the frozen claim contract itself absorbs "stale generation
+    /// OR already claimed" identically -- this loop never needs to distinguish which). Any one of
+    /// these failing stops the retry immediately, with no clipboard I/O of any kind for this attempt.
     /// </summary>
     private async Task ProcessWorkItemAsync(ClipboardCoordinatorWorkItem item)
     {
@@ -813,7 +892,33 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         if (!_notificationLifecycle.TryBeginEvaluation(claimedGeneration))
             return;
 
-        await RunPrivacyPipelineAsync(expectedTarget, claimedGeneration).ConfigureAwait(false);
+        var outcome = await RunPrivacyPipelineAsync(expectedTarget, claimedGeneration).ConfigureAwait(false);
+
+        for (int attempt = 2; outcome == ClipboardAttemptOutcome.AutonomousRetryEligible && attempt <= MaxAttemptsContractDefault; attempt++)
+        {
+            await _retryDelay.DelayAsync(RetryDelayIntervalContractDefault).ConfigureAwait(false);
+
+            // RETRY_ATTEMPT_START_LINEARIZATION_POINT -- see this method's own SHUTDOWN_LINEARIZATION
+            // doc above. Reading _phase is the ENTIRE critical section; every freshness check below
+            // runs synchronously, with no await in between, before this attempt's own native work.
+            lock (_gate)
+            {
+                if (_phase != CoordinatorPhase.Running)
+                    return;
+            }
+
+            if (_notificationLifecycle.CurrentGeneration != claimedGeneration)
+                return;
+
+            var freshTarget = _targetCapture.Capture();
+            if (!TargetGate.IsSupportedTarget(freshTarget))
+                return;
+
+            if (!_notificationLifecycle.TryBeginEvaluation(claimedGeneration))
+                return;
+
+            outcome = await RunPrivacyPipelineAsync(freshTarget, claimedGeneration).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -850,8 +955,21 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
     /// PROCESSING_EXCEPTION diagnostic behavior for a clipboard-triggered attempt, now also correctly
     /// reported to the evaluation lifecycle, which the pre-STEP61 coordinator had no such lifecycle
     /// to report to).
+    ///
+    /// BUG-002 ATTEMPT_OUTCOME_RETURN (Gate 2C): now returns a <see cref="ClipboardAttemptOutcome"/>
+    /// -- the ONLY change this STEP makes to this method's own shape -- so
+    /// <see cref="ProcessWorkItemAsync"/>'s retry controller can decide whether to attempt again,
+    /// without this method's own lifecycle-transition/diagnostic behavior changing in any way: every
+    /// <see cref="IClipboardEvaluationLifecycle.CompleteEvaluation"/>/<see cref="IClipboardEvaluationLifecycle.AbandonEvaluation"/>
+    /// call below is unchanged, still called from exactly the same branch, exactly once. The returned
+    /// value is derived ADDITIONALLY, via <see cref="ClipboardAutonomousRetryClassifier"/> (never by
+    /// modifying the FROZEN <see cref="ClipboardEvaluationOutcomeClassifier"/> calls themselves), and
+    /// is <see cref="ClipboardAttemptOutcome.Done"/> on every path except a
+    /// <see cref="ClipboardAutonomousRetryClassifier"/>-eligible non-Success read/write outcome. No
+    /// RAW-bearing value (<c>snapshot</c>, <c>outcome.WritePlan.ReplacementText</c>) is ever part of
+    /// the returned value or reachable from it.
     /// </summary>
-    private async Task RunPrivacyPipelineAsync(ForegroundTargetSnapshot target, long claimedGeneration)
+    private async Task<ClipboardAttemptOutcome> RunPrivacyPipelineAsync(ForegroundTargetSnapshot target, long claimedGeneration)
     {
         try
         {
@@ -863,7 +981,9 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
             {
                 Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(claimedGeneration, ClipboardDiagnosticTerminalReason.ReadRejected));
                 ReportOutcome(claimedGeneration, ClipboardEvaluationOutcomeClassifier.ClassifyRead(result.Outcome));
-                return;
+                return ClipboardAutonomousRetryClassifier.IsAutonomousRetryEligible(result.Outcome)
+                    ? ClipboardAttemptOutcome.AutonomousRetryEligible
+                    : ClipboardAttemptOutcome.Done;
             }
 
             // SUCCESS_HANDOFF_BOUNDARY: exactly one delegated call into the real Detection ->
@@ -897,7 +1017,11 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
                     Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(
                         claimedGeneration, ClipboardDiagnosticTerminalReason.WriteSkippedUnreliableSequence));
                     _notificationLifecycle.AbandonEvaluation(claimedGeneration);
-                    return;
+                    // BUG-002: an unreliable sequence is outside the Gate 2A autonomous-retry
+                    // allowlist (it is not a ClipboardReadOutcome/ClipboardWriteOutcome value at all,
+                    // and retrying gives no reason to expect a reliable sequence next time) -- stays
+                    // Done, fail-closed, exactly like every outcome this classifier does not know.
+                    return ClipboardAttemptOutcome.Done;
                 }
 
                 var writeResult = await _writeTransport.WriteTextIfSequenceMatchesAsync(
@@ -926,14 +1050,14 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
                     Diagnose(ClipboardDiagnosticEvent.ComposerVerificationHandoffPublished(claimedGeneration, published));
                     Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(claimedGeneration, ClipboardDiagnosticTerminalReason.Success));
                     _notificationLifecycle.CompleteEvaluation(claimedGeneration);
-                }
-                else
-                {
-                    Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(claimedGeneration, ClipboardDiagnosticTerminalReason.WriteRejected));
-                    ReportOutcome(claimedGeneration, ClipboardEvaluationOutcomeClassifier.ClassifyWrite(writeResult.Outcome));
+                    return ClipboardAttemptOutcome.Done;
                 }
 
-                return;
+                Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(claimedGeneration, ClipboardDiagnosticTerminalReason.WriteRejected));
+                ReportOutcome(claimedGeneration, ClipboardEvaluationOutcomeClassifier.ClassifyWrite(writeResult.Outcome));
+                return ClipboardAutonomousRetryClassifier.IsAutonomousRetryEligible(writeResult.Outcome)
+                    ? ClipboardAttemptOutcome.AutonomousRetryEligible
+                    : ClipboardAttemptOutcome.Done;
             }
 
             // DECISION_SESSION_PUBLICATION (Phase 3B STEP20 audit, implemented here): a DecisionPlan
@@ -951,22 +1075,27 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
                 // CompleteEvaluation itself silently absorbs a late call for a superseded
                 // generation (see that method's own doc) -- called unconditionally either way.
                 _notificationLifecycle.CompleteEvaluation(claimedGeneration);
-                return;
+                return ClipboardAttemptOutcome.Done;
             }
 
             // ALL_BYPASS / NO_PII (Phase 3C STEP41 diagnostic terminal): neither plan was produced --
             // nothing to protect and nothing to decide.
             Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(claimedGeneration, ClipboardDiagnosticTerminalReason.NoActionRequired));
             _notificationLifecycle.CompleteEvaluation(claimedGeneration);
+            return ClipboardAttemptOutcome.Done;
         }
         catch (Exception ex)
         {
             // WORKER_SURVIVAL / EXCEPTION_BOUNDARY -- see this method's own class doc. Absorbed
             // here, never rethrown; ProcessingException -> Retryable/Abandon (Phase 0.2D
-            // instruction's own DIRECT_PIPELINE_FACTS table).
+            // instruction's own DIRECT_PIPELINE_FACTS table). BUG-002 Gate 2A Issue 3 (final): an
+            // unexpected, unclassified exception is NOT a known-transient clipboard outcome -- no
+            // evidence establishes it is safe to retry, so this stays Done (exactly today's
+            // single-attempt behavior), never broadening into generic exception recovery.
             _notificationLifecycle.AbandonEvaluation(claimedGeneration);
             Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(
                 claimedGeneration, ClipboardDiagnosticTerminalReason.ProcessingException, ex.GetType().Name));
+            return ClipboardAttemptOutcome.Done;
         }
     }
 

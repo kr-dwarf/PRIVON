@@ -12,6 +12,11 @@ namespace Privon.App;
 /// needs -- a single checkable "Windows 시작 시 자동 실행" menu item -- still no dashboard, no
 /// settings window, no protection-category toggles (those remain explicitly out of scope for
 /// 0.2I, deferred to a future 0.2.1 settings surface).
+///
+/// PRIVON v0.2.1 Gate 3C adds exactly one more menu item -- "Settings..." -- the tray's own single
+/// entry point into the Settings UI (<see cref="SettingsRequested"/>). Still no dashboard, no
+/// protection-category toggles ON THE TRAY ITSELF; those now live behind the Settings surface this
+/// event opens, never on this menu directly.
 /// </summary>
 internal interface ITrayIconSurface : IDisposable
 {
@@ -23,6 +28,12 @@ internal interface ITrayIconSurface : IDisposable
     /// <see cref="WindowsAutoStartCoordinator.IsEnabled"/>), never inferred from this event or from
     /// the menu item's own visual checked state at click time.</summary>
     event EventHandler? AutoStartToggleRequested;
+
+    /// <summary>PRIVON v0.2.1 Gate 3C -- raised when the user chooses the tray's "Settings..."
+    /// command. Carries no state of its own; <see cref="SettingsCoordinator"/> is the sole owner of
+    /// whether this opens a fresh Settings surface or activates an already-open one
+    /// (ONE_CURRENT_SETTINGS_WINDOW).</summary>
+    event EventHandler? SettingsRequested;
 
     /// <summary>Makes the tray icon visible. A neutral tooltip only (e.g. "PRIVON — 실행 중") --
     /// never "보호 중"/"보호 완료"/"검증됨" or any other claim this codebase's frozen

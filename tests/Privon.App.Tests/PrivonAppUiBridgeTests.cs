@@ -1,6 +1,7 @@
 using Privon.App;
 using Privon.Core;
 using Privon.Detection;
+using Privon.Storage;
 using Privon.Windows;
 
 namespace Privon.App.Tests;
@@ -56,7 +57,9 @@ public class PrivonAppUiBridgeTests
         public required FakeWindowsAutoStartRegistration AutoStartRegistration { get; init; }
         public required WindowsAutoStartCoordinator AutoStartCoordinator { get; init; }
         public required List<FakeDecisionPromptSurface> CreatedSurfaces { get; init; }
+        public required List<FakeSettingsSurface> CreatedSettingsSurfaces { get; init; }
         public required PrivonAppUiBridge Bridge { get; init; }
+        public required string StorageRoot { get; init; }
     }
 
     private static Harness CreateHarness(string currentExecutablePath = "C:\\PRIVON\\PRIVON.exe")
@@ -69,13 +72,32 @@ public class PrivonAppUiBridgeTests
         var autoStartRegistration = new FakeWindowsAutoStartRegistration();
         var autoStartCoordinator = new WindowsAutoStartCoordinator(autoStartRegistration, () => currentExecutablePath);
         var createdSurfaces = new List<FakeDecisionPromptSurface>();
+        var createdSettingsSurfaces = new List<FakeSettingsSurface>();
 
-        var bridge = new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, () =>
-        {
-            var surface = new FakeDecisionPromptSurface();
-            createdSurfaces.Add(surface);
-            return surface;
-        }, autoStartCoordinator);
+        var storageRoot = CreateTempStorageRoot();
+        var store = PrivonLocalStore.OpenOrCreate(storageRoot);
+        var categorySettingsService = new ProtectionCategorySettingsService(store);
+        var userExceptionService = new UserExceptionService(store);
+
+        var bridge = new PrivonAppUiBridge(
+            publisher, lifecycle, resolver, scheduler, tray,
+            () =>
+            {
+                var surface = new FakeDecisionPromptSurface();
+                createdSurfaces.Add(surface);
+                return surface;
+            },
+            autoStartCoordinator,
+            categorySettingsService,
+            userExceptionService,
+            DetectionPipeline.CreateDefault(),
+            () => store.IsMasterKeyUnavailable,
+            () =>
+            {
+                var surface = new FakeSettingsSurface();
+                createdSettingsSurfaces.Add(surface);
+                return surface;
+            });
 
         return new Harness
         {
@@ -87,7 +109,9 @@ public class PrivonAppUiBridgeTests
             AutoStartRegistration = autoStartRegistration,
             AutoStartCoordinator = autoStartCoordinator,
             CreatedSurfaces = createdSurfaces,
+            CreatedSettingsSurfaces = createdSettingsSurfaces,
             Bridge = bridge,
+            StorageRoot = storageRoot,
         };
     }
 
@@ -404,14 +428,127 @@ public class PrivonAppUiBridgeTests
         var tray = new FakeTrayIconSurface();
         Func<IDecisionPromptSurface> factory = () => new FakeDecisionPromptSurface();
         var autoStart = new WindowsAutoStartCoordinator(new FakeWindowsAutoStartRegistration());
+        var store = PrivonLocalStore.OpenOrCreate(CreateTempStorageRoot());
+        var categoryService = new ProtectionCategorySettingsService(store);
+        var exceptionService = new UserExceptionService(store);
+        var pipeline = DetectionPipeline.CreateDefault();
+        Func<bool> isUnavailable = () => false;
+        Func<ISettingsSurface> settingsFactory = () => new FakeSettingsSurface();
 
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(null!, lifecycle, resolver, scheduler, tray, factory, autoStart));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, null!, resolver, scheduler, tray, factory, autoStart));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, null!, scheduler, tray, factory, autoStart));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, null!, tray, factory, autoStart));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, null!, factory, autoStart));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, null!, autoStart));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, null!));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(null!, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, null!, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, null!, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, null!, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, null!, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, null!, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, null!, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, null!, exceptionService, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, null!, pipeline, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, null!, isUnavailable, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, null!, settingsFactory));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, null!));
+    }
+
+    // ==================================================================
+    // PRIVON v0.2.1 Gate 3C -- SETTINGS TRAY ENTRY POINT / ONE_CURRENT_SETTINGS_WINDOW / SHUTDOWN
+    // ==================================================================
+
+    // UI-001
+    [Fact]
+    public void SettingsRequested_ShowsASettingsSurface()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+
+        h.Tray.RaiseSettingsRequested();
+
+        var surface = Assert.Single(h.CreatedSettingsSurfaces);
+        Assert.Equal(1, surface.ShowCallCount);
+    }
+
+    [Fact]
+    public void SettingsRequested_RoutesThroughTheSameDispatcherScheduler()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+
+        var postCountBefore = h.Scheduler.PostCallCount;
+        h.Tray.RaiseSettingsRequested();
+
+        Assert.True(h.Scheduler.PostCallCount > postCountBefore);
+    }
+
+    // UI-017
+    [Fact]
+    public void SettingsRequested_TwiceWhileOpen_ActivatesExisting_NeverConstructsASecond()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+        h.Tray.RaiseSettingsRequested();
+        var surface = Assert.Single(h.CreatedSettingsSurfaces);
+
+        h.Tray.RaiseSettingsRequested();
+
+        Assert.Single(h.CreatedSettingsSurfaces);
+        Assert.Equal(1, surface.ActivateCallCount);
+    }
+
+    [Fact]
+    public void Start_TrayShowThrows_SettingsSubscriptionIsRemoved()
+    {
+        var h = CreateHarness();
+        h.Tray.ThrowOnShow = new InvalidOperationException("synthetic");
+
+        Assert.ThrowsAny<Exception>(h.Bridge.Start);
+
+        Assert.Equal(0, h.Tray.SettingsRequestedSubscriberCount);
+    }
+
+    [Fact]
+    public void Dispose_ClosesOpenSettingsSurface()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+        h.Tray.RaiseSettingsRequested();
+        var surface = Assert.Single(h.CreatedSettingsSurfaces);
+
+        h.Bridge.Dispose();
+
+        Assert.True(surface.IsClosed);
+    }
+
+    // SETTINGS_CLOSED_BEFORE_UI_BRIDGE_TEARDOWN -- Settings closes before the tray is disposed,
+    // mirroring the existing decision-prompt-before-tray ordering this project already established.
+    [Fact]
+    public void Dispose_ClosesOpenSettingsSurfaceBeforeDisposingTray()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+        h.Tray.RaiseSettingsRequested();
+        var surface = Assert.Single(h.CreatedSettingsSurfaces);
+
+        var order = new List<string>();
+        surface.OnClose = () => order.Add("settings");
+        h.Tray.OnDispose = () => order.Add("tray");
+
+        h.Bridge.Dispose();
+
+        Assert.Equal(new[] { "settings", "tray" }, order);
+    }
+
+    [Fact]
+    public void Dispose_UnsubscribesSettingsRequested_LaterRaiseDoesNothing()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+
+        h.Bridge.Dispose();
+
+        Assert.Equal(0, h.Tray.SettingsRequestedSubscriberCount);
+
+        var postCountBefore = h.Scheduler.PostCallCount;
+        h.Tray.RaiseSettingsRequested();
+        Assert.Equal(postCountBefore, h.Scheduler.PostCallCount);
     }
 
     // ==================================================================

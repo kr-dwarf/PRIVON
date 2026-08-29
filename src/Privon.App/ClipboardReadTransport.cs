@@ -9,9 +9,9 @@ namespace Privon.App;
 /// state of its own. No duplicate clipboard logic exists here -- if <see cref="ClipboardChangeMonitor"/>'s
 /// own behavior ever needs to change, this wrapper never needs a matching change.
 ///
-/// Not yet constructed by any live composition root (Phase 3B STEP2 explicitly does not wire
-/// <c>App.xaml.cs</c>) -- this type exists so a future composition-root STEP has a ready-made,
-/// already-tested-by-composition adapter to instantiate.
+/// Constructed by the live composition root -- see <see cref="PrivonAppComposition.BuildGraph"/>,
+/// which passes the shared <see cref="ClipboardChangeMonitor"/> instance to this type's internal
+/// constructor overload.
 /// </summary>
 internal sealed class ClipboardReadTransport : IClipboardReadTransport, IDisposable
 {

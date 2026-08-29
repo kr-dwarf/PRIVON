@@ -20,6 +20,11 @@ public class ClipboardChangeMonitorForegroundGuardTests
     {
         var native = new FakeClipboardMonitorNative { UnicodeTextAvailable = true, SequenceNumber = DefaultSequence };
         var textNative = new FakeClipboardTextNative();
+        // BUG-006: default original-content baseline -- see ClipboardChangeMonitorWriteTests's own
+        // CreateStarted for the full rationale. Read tests here that need specific/absent content
+        // (or must prove it was never copied) still override via SetUnicodeTextPayload/
+        // SetRawPayload exactly as before -- unaffected by this default.
+        textNative.SetUnicodeTextPayload("ORIGINAL-CLIPBOARD-TEXT");
         var foregroundSource = new FakeForegroundTargetSource();
         var monitor = new ClipboardChangeMonitor(native, textNative: textNative, foregroundSource: foregroundSource);
         monitor.Start();

@@ -18,6 +18,13 @@ public class ClipboardChangeMonitorWriteTests
     {
         var native = new FakeClipboardMonitorNative { UnicodeTextAvailable = true, SequenceNumber = DefaultSequence };
         var textNative = new FakeClipboardTextNative();
+        // BUG-006: a coherent default "something is already on the clipboard" baseline -- matches
+        // the real production precondition (a write is only ever attempted after the App layer's
+        // own earlier read already confirmed text was present) and is what the write path's new
+        // pre-EmptyClipboard rollback-backup read now needs to succeed. Individual tests that want
+        // a different original payload (or none) still override it via SetUnicodeTextPayload/
+        // SetRawPayload/the SetClipboardDataResult=false seams, exactly as before.
+        textNative.SetUnicodeTextPayload("ORIGINAL-CLIPBOARD-TEXT");
         var monitor = new ClipboardChangeMonitor(native, textNative: textNative);
         monitor.Start();
         return (monitor, native, textNative);

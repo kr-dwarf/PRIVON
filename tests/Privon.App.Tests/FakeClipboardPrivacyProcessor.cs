@@ -33,8 +33,26 @@ internal sealed class FakeClipboardPrivacyProcessor : IClipboardPrivacyProcessor
     /// prove DETECTION_FAILURE_POLICY/WORKER_SURVIVAL without a real throwing detector.</summary>
     public Exception? ThrowOnProcess { get; set; }
 
+    /// <summary>
+    /// BUG-002 Gate 2B -- per-call scripted outcomes, additive and empty by default (so every
+    /// pre-Gate-2B test keeps the exact ResultToReturn/WritePlanToReturn/DecisionPlanToReturn
+    /// behavior). When non-empty, each Process call consumes the next scripted outcome in order;
+    /// once exhausted, behavior falls back to the property-driven outcome exactly as before. Lets a
+    /// retry regression model "attempt 1 sees RAW PII, attempt 2 re-reads the now-protected
+    /// clipboard and finds nothing left to protect."
+    /// </summary>
+    public void ScriptOutcomes(params ClipboardPrivacyProcessingOutcome[] outcomes)
+    {
+        foreach (var outcome in outcomes)
+            _scriptedOutcomes.Enqueue(outcome);
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<ClipboardPrivacyProcessingOutcome> _scriptedOutcomes = new();
+
     public ClipboardPrivacyProcessingOutcome Process(ForegroundTargetSnapshot expectedTarget, ClipboardTextSnapshot snapshot)
     {
+        var scriptedOutcome = _scriptedOutcomes.TryDequeue(out var scripted) ? scripted : (ClipboardPrivacyProcessingOutcome?)null;
+
         // ORDERING_HAZARD (Stabilization Gate, post-Phase-0.2E): CallCount is written LAST -- see
         // FakeClipboardWriteTransport's identical comment / ClipboardTestDoubleOrderingHazardTests
         // for the deterministic proof of why this ordering matters for a background-worker-driven
@@ -46,6 +64,6 @@ internal sealed class FakeClipboardPrivacyProcessor : IClipboardPrivacyProcessor
         if (ThrowOnProcess is { } ex)
             throw ex;
 
-        return new ClipboardPrivacyProcessingOutcome(ResultToReturn, WritePlanToReturn, DecisionPlanToReturn);
+        return scriptedOutcome ?? new ClipboardPrivacyProcessingOutcome(ResultToReturn, WritePlanToReturn, DecisionPlanToReturn);
     }
 }

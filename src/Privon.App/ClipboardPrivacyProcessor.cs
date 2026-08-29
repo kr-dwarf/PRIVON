@@ -1,5 +1,6 @@
 using Privon.Core;
 using Privon.Detection;
+using Privon.Storage;
 using Privon.Windows;
 
 namespace Privon.App;
@@ -116,9 +117,14 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
 {
     private readonly DetectionPipeline _pipeline;
     private readonly ITrustExceptionProvider _trustExceptionProvider;
+    private readonly IProtectionCategorySettingsProvider _categorySettingsProvider;
+    private readonly IUserExceptionProvider _userExceptionProvider;
 
-    public ClipboardPrivacyProcessor(ITrustExceptionProvider trustExceptionProvider)
-        : this(DetectionPipeline.CreateDefault(), trustExceptionProvider)
+    public ClipboardPrivacyProcessor(
+        ITrustExceptionProvider trustExceptionProvider,
+        IProtectionCategorySettingsProvider? categorySettingsProvider = null,
+        IUserExceptionProvider? userExceptionProvider = null)
+        : this(DetectionPipeline.CreateDefault(), trustExceptionProvider, categorySettingsProvider, userExceptionProvider)
     {
     }
 
@@ -130,13 +136,52 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
     /// over either Detection or the trust/exception bridge. The production (public) constructor
     /// above always creates exactly one real default pipeline -- this overload is never used
     /// outside tests.
+    ///
+    /// <paramref name="categorySettingsProvider"/> (PRIVON v0.2.1 Gate 3A) is OPTIONAL on both
+    /// constructors, defaulting to an internal always-<see cref="ProtectionCategorySettings.AllOn"/>
+    /// provider when omitted -- AllOn categories is a structural no-op for
+    /// <see cref="CategoryPolicyEvaluator"/> (see its own doc), so every pre-existing call site
+    /// across this assembly's tests keeps its exact prior behavior unchanged without needing to
+    /// pass a third argument. <see cref="PrivonAppComposition"/> is the only caller that supplies
+    /// a real <see cref="ProtectionCategorySettingsProvider"/>.
+    ///
+    /// <paramref name="userExceptionProvider"/> (PRIVON v0.2.1 Gate 3B) is likewise OPTIONAL,
+    /// defaulting to an internal always-empty provider -- an empty exception set is a structural
+    /// no-op for <see cref="UserExceptionPolicyEvaluator"/> (see its own doc), preserving every
+    /// pre-existing call site's exact prior behavior.
     /// </summary>
-    internal ClipboardPrivacyProcessor(DetectionPipeline pipeline, ITrustExceptionProvider trustExceptionProvider)
+    internal ClipboardPrivacyProcessor(
+        DetectionPipeline pipeline,
+        ITrustExceptionProvider trustExceptionProvider,
+        IProtectionCategorySettingsProvider? categorySettingsProvider = null,
+        IUserExceptionProvider? userExceptionProvider = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(trustExceptionProvider);
         _pipeline = pipeline;
         _trustExceptionProvider = trustExceptionProvider;
+        _categorySettingsProvider = categorySettingsProvider ?? AllOnProtectionCategorySettingsProvider.Instance;
+        _userExceptionProvider = userExceptionProvider ?? EmptyUserExceptionProvider.Instance;
+    }
+
+    // Same "default to the real/no-op production implementation when a test doesn't override it"
+    // pattern already used elsewhere in this codebase (e.g. ClipboardChangeMonitor's own
+    // `_textNative = textNative ?? new Win32ClipboardTextNative();`) -- a stateless singleton, not
+    // a new subsystem. Deliberately private/nested: this is an implementation detail of
+    // ClipboardPrivacyProcessor's own backward-compatible constructor defaulting, never meant to
+    // be referenced or faked independently (use FakeProtectionCategorySettingsProvider for that).
+    private sealed class AllOnProtectionCategorySettingsProvider : IProtectionCategorySettingsProvider
+    {
+        public static readonly AllOnProtectionCategorySettingsProvider Instance = new();
+        public ProtectionCategorySettings Load() => ProtectionCategorySettings.AllOn;
+    }
+
+    // Identical rationale/pattern as AllOnProtectionCategorySettingsProvider above, for
+    // UserExceptionPolicyEvaluator's own structural no-op input (an empty exception set).
+    private sealed class EmptyUserExceptionProvider : IUserExceptionProvider
+    {
+        public static readonly EmptyUserExceptionProvider Instance = new();
+        public IReadOnlyList<UserExceptionValue> Load() => [];
     }
 
     public ClipboardPrivacyProcessingOutcome Process(ForegroundTargetSnapshot expectedTarget, ClipboardTextSnapshot snapshot)
@@ -239,8 +284,29 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
         // BASE policy only (see APP_ALIAS_ASSIGNMENT_BOUNDARY doc above) -- CandidatePolicyEvaluator
         // is a pure function of each candidate's own (RiskLevel, Confidence, TrustState); no
         // revision/grant/Send-intent state is read or produced here.
-        var decisions = CandidatePolicyEvaluator.Evaluate(evaluated);
+        var baseDecisions = CandidatePolicyEvaluator.Evaluate(evaluated);
 
+        // CATEGORY_POLICY_INSERTION (PRIVON v0.2.1 Gate 3A): runs strictly between base policy and
+        // AliasAssigner -- see CategoryPolicyEvaluator's own doc for the full contract (Protect-only
+        // transform, NeedsDecision/Bypass untouched, Level3 priority automatic). Loaded once per
+        // attempt whenever any candidate exists, matching _trustExceptionProvider's own fresh-per-
+        // attempt/no-cache policy -- never loaded on the NO_PII fast path above.
+        var categorySettings = _categorySettingsProvider.Load();
+        var categoryDecisions = CategoryPolicyEvaluator.Apply(baseDecisions, categorySettings);
+
+        // USER_EXCEPTION_POLICY_INSERTION (PRIVON v0.2.1 Gate 3B): runs strictly after
+        // CategoryPolicyEvaluator and before AliasAssigner -- see UserExceptionPolicyEvaluator's
+        // own doc for the full contract (Protect-only transform, NeedsDecision/Bypass untouched,
+        // Level3 priority automatic, identical shape to CategoryPolicyEvaluator). Loaded once per
+        // attempt, same fresh-per-attempt/no-cache policy as every other provider here.
+        var userExceptions = _userExceptionProvider.Load();
+        var decisions = UserExceptionPolicyEvaluator.Apply(categoryDecisions, userExceptions);
+
+        // Counted from the FINAL (post-category, post-user-exception) decisions, not
+        // baseDecisions/categoryDecisions -- these counts drive NEEDSDECISION_BLOCKS_REPLACEMENT/
+        // ALL_BYPASS branching in Process() below, so they must reflect what AliasAssigner/
+        // AliasReplacer actually do with this attempt, not merely what an earlier stage alone
+        // would have produced.
         int protectCount = 0, needsDecisionCount = 0, bypassCount = 0;
         foreach (var decision in decisions)
         {

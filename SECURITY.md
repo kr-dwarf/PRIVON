@@ -7,24 +7,28 @@ of that, security and privacy issues in PRIVON deserve careful, private handling
 ## Reporting a vulnerability
 
 **Do not report an exploitable privacy or security vulnerability through a public GitHub
-Issue** if a private reporting channel is available.
+Issue.** This applies regardless of whether a private channel is confirmed available yet —
+if you are unsure how to report privately, hold the report rather than posting vulnerability
+details (exploit steps, affected code paths, proof-of-concept data) into a public Issue.
 
-After this repository is published on GitHub, maintainers intend to enable **GitHub Private
-Vulnerability Reporting** for this repository. Once that is configured, the private
-reporting entry point will be available from this repository's **Security** tab, and will
-be referenced from this document.
+Maintainers intend to enable **GitHub Private Vulnerability Reporting** for this
+repository. Whether it is currently configured and enabled has not been verified from this
+document alone — once confirmed, the private reporting entry point will be available from
+this repository's **Security** tab, and will be referenced from this document.
 
-**Until GitHub Private Vulnerability Reporting is configured and confirmed enabled, no
-public reporting email address is published here.** We are not inventing a contact address
-in advance of that feature being active. If you believe you have found a serious issue
-before private reporting is available, please check back here or watch the repository's
-Security tab — the channel will be announced there once it exists.
+**Until GitHub Private Vulnerability Reporting is confirmed enabled, no public reporting
+email address is published here.** We are not inventing a contact address in advance of
+that feature being confirmed active. If you believe you have found a serious issue before
+private reporting is confirmed available, please check the repository's Security tab first
+— the channel will be announced there once it exists — and in the meantime, never place
+real sensitive data or full exploit details in a public Issue (see below).
 
 ## What to include in a report
 
 To help us evaluate and reproduce a report efficiently, please include:
 
-- The affected PRIVON version (from the release you downloaded, e.g. `0.1.0-beta`).
+- The affected PRIVON version (from the release you downloaded — see the release ZIP
+  filename or the GitHub Releases page).
 - Your Windows version (e.g. Windows 11 24H2).
 - The affected workflow (e.g. clipboard detection, Windows session lock handling, target
   authorization, a specific detector category).

@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with PRIVON 0.1 beta.
+description: Report a problem with PRIVON.
 title: "[Bug]: "
 labels: ["bug", "needs-triage"]
 body:
@@ -26,8 +26,8 @@ body:
     id: privon-version
     attributes:
       label: PRIVON version
-      description: The version you downloaded (e.g. 0.1.0-beta).
-      placeholder: "0.1.0-beta"
+      description: The version you downloaded (see the release ZIP filename or the GitHub Releases page).
+      placeholder: "e.g. the version in your release ZIP's filename"
     validations:
       required: true
 

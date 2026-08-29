@@ -35,7 +35,7 @@ public class ForegroundTargetInspectorTests
         Assert.False(snapshot.IsResolved);
         Assert.Equal(0u, snapshot.ProcessId);
         Assert.Null(snapshot.ProcessName);
-        Assert.DoesNotContain(nameof(FakeForegroundTargetSource.TryGetProcessName), source.CallLog);
+        Assert.DoesNotContain(nameof(FakeForegroundTargetSource.TryResolveConfirmedForegroundIdentity), source.CallLog);
     }
 
     // ---- 3. pid == 0 -> unresolved, even if the source claims success (defensive: 0 is never
@@ -55,7 +55,7 @@ public class ForegroundTargetInspectorTests
         Assert.False(snapshot.IsResolved);
         Assert.Equal(0u, snapshot.ProcessId);
         Assert.Null(snapshot.ProcessName);
-        Assert.DoesNotContain(nameof(FakeForegroundTargetSource.TryGetProcessName), source.CallLog);
+        Assert.DoesNotContain(nameof(FakeForegroundTargetSource.TryResolveConfirmedForegroundIdentity), source.CallLog);
     }
 
     // ---- 4/5/6. valid hwnd/pid/process -> resolved, PID and ProcessName preserved exactly ----
@@ -126,22 +126,25 @@ public class ForegroundTargetInspectorTests
         Assert.Null(snapshot.ProcessName);
     }
 
-    // ---- 8. process-name lookup failure against the REAL Win32 implementation -- a PID that
+    // ---- 8. identity resolution failure against the REAL Win32 implementation -- a PID that
     // (almost certainly) does not correspond to any running process must resolve to false, never
-    // throw. This exercises Win32ForegroundTargetSource's actual Process.GetProcessById exception
-    // handling directly, not the fake. ----
+    // throw. Post-Gate-2H.3 this exercises the real OpenProcess failure path directly (no
+    // System.Diagnostics.Process is involved anywhere in identity resolution any more). ----
     [Fact]
-    public void Win32Source_TryGetProcessName_NonexistentPid_ReturnsFalse_DoesNotThrow()
+    public void Win32Source_ConfirmedIdentity_NonexistentPid_ReturnsFalse_DoesNotThrow()
     {
         var source = new Win32ForegroundTargetSource();
 
         // Int32.MaxValue is not a valid PID on any real Windows system (PIDs are allocated in a
         // much smaller range) -- this deterministically exercises the "no such process" path
         // without depending on any specific process having exited during the test run.
-        bool result = source.TryGetProcessName(int.MaxValue, out string? processName);
+        bool result = source.TryResolveConfirmedForegroundIdentity(
+            int.MaxValue, out string? processName, out var packageIdentity, out string? packageFamilyName);
 
         Assert.False(result);
         Assert.Null(processName);
+        Assert.Equal(PackageIdentityResolution.Unresolved, packageIdentity);
+        Assert.Null(packageFamilyName);
     }
 
     // ---- 9. no stale prior successful identity reused after failure ----

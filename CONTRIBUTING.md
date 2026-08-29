@@ -1,15 +1,15 @@
 # Contributing to PRIVON
 
 Thank you for your interest in PRIVON. This document describes how to report issues,
-propose changes, and (eventually) submit code during the 0.1 public beta.
+propose changes, and (eventually) submit code during the public beta.
 
 PRIVON is released under the [PolyForm Shield 1.0.0](./LICENSE) license — a
 **source-available**, non-OSI license, not an open-source license. See `LICENSE` for the
 exact, binding terms. This document describes project process and does not modify or
 supersede anything in `LICENSE`.
 
-This contribution policy is intentionally conservative for the 0.1 beta. It will evolve as
-the project matures.
+This contribution policy is intentionally conservative during the public beta. It will
+evolve as the project matures.
 
 ---
 
@@ -33,9 +33,9 @@ via GitHub Issues. Please use the provided Issue forms.
 
 ---
 
-## 3. External code PR policy (0.1 beta)
+## 3. External code PR policy (public beta)
 
-During the initial beta:
+During the public beta:
 
 - Code PRs require **prior maintainer discussion and approval** (see §2). PRs opened
   without that discussion may be closed without review.
@@ -58,7 +58,7 @@ handled carefully and conservatively:
 - Maintainers may require additional contribution terms (for example, a contributor
   license/rights agreement) before accepting substantial code contributions, particularly
   once such terms are finalized.
-- **During the early 0.1 beta, maintainers may choose not to merge external code at all**
+- **During the public beta, maintainers may choose not to merge external code at all**
   until that contribution-rights policy is finalized, even if a PR is otherwise
   high-quality and in-scope. This is a deliberate, temporary caution — not a judgment on
   any individual contributor.
@@ -112,18 +112,20 @@ correctness and safety of the code they submit, regardless of how it was produce
 
 ---
 
-## 8. Merge policy (intended, post-publication)
+## 8. Merge policy (intended)
 
-Once the repository is published on GitHub, the intended merge policy is:
+The intended merge policy is:
 
 - No direct pushes to `main`.
 - Pull request review is required before merging.
-- Required automated status checks will apply once CI is configured (not yet enabled).
+- Required automated status checks will apply once CI is configured (not yet enabled —
+  this repository does not currently run GitHub Actions or any other CI).
 - Squash merge is the preferred merge method for ordinary contributions.
 
-**Branch protection is not yet configured.** It will be configured in the GitHub
-repository settings after the repository is published — this document describes intent,
-not current repository state.
+**Whether branch protection is currently configured has not been verified from this
+repository's own content** — this document describes intent, not a confirmed current
+repository setting (see [SECURITY.md](./SECURITY.md) for the equivalent caveat on Private
+Vulnerability Reporting).
 
 ---
 

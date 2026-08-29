@@ -18,7 +18,14 @@ namespace Privon.App.Tests;
 // already established for ClipboardPrivacyProcessorTests.cs.
 public class ClipboardDecisionActionResolverTests
 {
-    private static readonly ForegroundTargetSnapshot ChatGpt = new(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT");
+    // BUG-004 Gate 2G: migrated to carry the approved current-product package identity, and to
+    // exactly match FakeForegroundTargetCapture's own (likewise migrated) default -- this constant
+    // represents "the officially supported target" and is asserted, at line ~808, against whatever
+    // FakeForegroundTargetCapture.Capture() actually returned; NotChatGpt below is a negative
+    // fixture and is intentionally left untouched.
+    private static readonly ForegroundTargetSnapshot ChatGpt =
+        new(IsResolved: true, ProcessId: 4242, ProcessName: "ChatGPT",
+            PackageIdentity: PackageIdentityResolution.Resolved, PackageFamilyName: "OpenAI.Codex_2p2nqsd0c76g0");
     private static readonly ForegroundTargetSnapshot NotChatGpt = new(IsResolved: true, ProcessId: 9999, ProcessName: "notepad");
 
     private const string Level1Text = "37.5665,126.9780"; // GPS, order-unambiguous bare pair -> Level1/Medium

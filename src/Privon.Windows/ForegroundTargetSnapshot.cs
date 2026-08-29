@@ -21,5 +21,26 @@ namespace Privon.Windows;
 /// for the resolved PID -- the executable's base name without a path or the ".exe" extension, per
 /// that property's own documented BCL semantics. No normalization, no case-folding is applied here
 /// (a future TargetGate decides its own comparison semantics).
+///
+/// BUG-004 Gate 2F/2H.3 -- <see cref="PackageIdentity"/>/<see cref="PackageFamilyName"/> extend
+/// this type with the SAME mechanical-fact-only discipline: a Windows package (MSIX/AppX) identity
+/// fact, never a policy judgment. All four identity facts are produced together by
+/// <see cref="ForegroundIdentityCapture.TryCapture"/>, which derives the process name and the
+/// package identity from ONE pinned native process handle and confirms, while that handle is still
+/// open, that the pinned process is still the foreground process -- see
+/// <see cref="IForegroundTargetSource.TryResolveConfirmedForegroundIdentity"/>'s own doc for the
+/// full contract and for why the earlier two-independent-lookups approach was unsound. Deliberately
+/// excludes package VERSION, <c>PackageFullName</c>, install path, or any other update-brittle
+/// value -- <see cref="PackageFamilyName"/> is the only package-identity fact this type will ever
+/// carry, by design (a future TargetGate must never be able to pin a version/path even if it wanted
+/// to, because this type structurally cannot express one). Both default to the SAME safe values a
+/// default-initialized/unresolved snapshot already has (<see cref="PackageIdentityResolution.Unresolved"/>,
+/// <see langword="null"/>) so every pre-Gate-2F construction site (which never mentions these two
+/// parameters) keeps compiling and behaving identically.
 /// </summary>
-public readonly record struct ForegroundTargetSnapshot(bool IsResolved, uint ProcessId, string? ProcessName);
+public readonly record struct ForegroundTargetSnapshot(
+    bool IsResolved,
+    uint ProcessId,
+    string? ProcessName,
+    PackageIdentityResolution PackageIdentity = PackageIdentityResolution.Unresolved,
+    string? PackageFamilyName = null);
