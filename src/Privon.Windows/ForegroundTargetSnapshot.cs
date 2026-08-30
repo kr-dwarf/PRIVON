@@ -37,10 +37,28 @@ namespace Privon.Windows;
 /// default-initialized/unresolved snapshot already has (<see cref="PackageIdentityResolution.Unresolved"/>,
 /// <see langword="null"/>) so every pre-Gate-2F construction site (which never mentions these two
 /// parameters) keeps compiling and behaving identically.
+///
+/// PRIVON 0.3.0 Gate 1B -- <see cref="ExecutableSignature"/>/<see cref="SignerOrganization"/> extend
+/// this type with the SAME mechanical-fact-only discipline, for the Claude Windows target: an
+/// Authenticode signature verification fact, never a policy judgment (never compared against
+/// "Anthropic, PBC" anywhere in this assembly -- see <see cref="ExecutableSignatureResolution"/>'s
+/// own doc). Signature inspection only ever runs when <see cref="PackageIdentity"/> is definitively
+/// <see cref="PackageIdentityResolution.NoPackage"/> -- for every packaged snapshot (and for every
+/// unresolved one) these two fields stay at their safe defaults
+/// (<see cref="ExecutableSignatureResolution.NotInspected"/>, <see langword="null"/>), which are the
+/// SAME safe values a default-initialized/pre-Gate-1B snapshot already has, so every earlier
+/// construction site (which never mentions these two parameters) keeps compiling and behaving
+/// identically. Deliberately excludes executable path, AUMID, certificate thumbprint/serial/issuer,
+/// certificate validity window, CompanyName, and registry publisher -- <see cref="SignerOrganization"/>
+/// (the Authenticode subject Organization attribute alone) is the only signer-identity fact this
+/// type will ever carry, by design (a future TargetGate must never be able to pin a
+/// thumbprint/CA/version even if it wanted to, because this type structurally cannot express one).
 /// </summary>
 public readonly record struct ForegroundTargetSnapshot(
     bool IsResolved,
     uint ProcessId,
     string? ProcessName,
     PackageIdentityResolution PackageIdentity = PackageIdentityResolution.Unresolved,
-    string? PackageFamilyName = null);
+    string? PackageFamilyName = null,
+    ExecutableSignatureResolution ExecutableSignature = ExecutableSignatureResolution.NotInspected,
+    string? SignerOrganization = null);

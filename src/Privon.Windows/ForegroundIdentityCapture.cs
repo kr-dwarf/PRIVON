@@ -55,7 +55,8 @@ internal static class ForegroundIdentityCapture
             return false;
 
         if (!source.TryResolveConfirmedForegroundIdentity(
-                processId, out string? processName, out var packageIdentity, out string? packageFamilyName))
+                processId, out string? processName, out var packageIdentity, out string? packageFamilyName,
+                out var executableSignature, out string? signerOrganization))
         {
             return false;
         }
@@ -65,7 +66,9 @@ internal static class ForegroundIdentityCapture
             ProcessId: processId,
             ProcessName: processName,
             PackageIdentity: packageIdentity,
-            PackageFamilyName: packageFamilyName);
+            PackageFamilyName: packageFamilyName,
+            ExecutableSignature: executableSignature,
+            SignerOrganization: signerOrganization);
         return true;
     }
 
@@ -85,6 +88,15 @@ internal static class ForegroundIdentityCapture
     ///
     /// FACTS_ONLY: this compares current-vs-expected. It never compares against any supported
     /// product constant -- that constant does not exist anywhere in this assembly.
+    ///
+    /// PRIVON 0.3.0 Gate 1B -- <see cref="ForegroundTargetSnapshot.ExecutableSignature"/>/
+    /// <see cref="ForegroundTargetSnapshot.SignerOrganization"/> extend this SAME comparison with
+    /// the SAME discipline: <see cref="ForegroundTargetSnapshot.SignerOrganization"/> uses
+    /// <see cref="StringComparison.Ordinal"/> (an Authenticode subject Organization attribute is an
+    /// exact identifier, never case-folded -- matching <see cref="ForegroundTargetSnapshot.PackageFamilyName"/>'s
+    /// own convention). A previously-authorized Claude session whose fresh re-capture now reports a
+    /// different signature state or a different signer organization -- even with PID/ProcessName/
+    /// PackageIdentity all still agreeing -- no longer matches.
     /// </summary>
     public static bool Matches(ForegroundTargetSnapshot current, ForegroundTargetSnapshot expected) =>
         current.IsResolved
@@ -92,5 +104,7 @@ internal static class ForegroundIdentityCapture
         && current.ProcessId == expected.ProcessId
         && string.Equals(current.ProcessName, expected.ProcessName, StringComparison.OrdinalIgnoreCase)
         && current.PackageIdentity == expected.PackageIdentity
-        && string.Equals(current.PackageFamilyName, expected.PackageFamilyName, StringComparison.Ordinal);
+        && string.Equals(current.PackageFamilyName, expected.PackageFamilyName, StringComparison.Ordinal)
+        && current.ExecutableSignature == expected.ExecutableSignature
+        && string.Equals(current.SignerOrganization, expected.SignerOrganization, StringComparison.Ordinal);
 }

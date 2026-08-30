@@ -51,10 +51,62 @@ namespace Privon.App;
 /// </summary>
 internal static class TargetGate
 {
-    private const string SupportedProcessName = "ChatGPT";
+    private const string SupportedChatGptProcessName = "ChatGPT";
 
     /// <summary>See this type's own SUPPORTED_IDENTITY_0_2_1 doc above.</summary>
     private const string SupportedPackageFamilyName = "OpenAI.Codex_2p2nqsd0c76g0";
+
+    /// <summary>
+    /// PRIVON 0.3.0 Gate 1B -- CLAUDE_RULE (Windows Multi-AI Authorization Contract Freeze, Gate
+    /// 0B/0D, frozen). The second and, for 0.3.0, LAST supported target. Deliberately mirrors
+    /// SUPPORTED_IDENTITY_0_2_1's own discipline for an unpackaged, Authenticode-signed application:
+    /// process name remains a cheap, necessary, INSUFFICIENT pre-filter (<see cref="SupportedClaudeProcessName"/>);
+    /// the actual authority is the mechanical, chain-validated, Code-Signing-EKU-bearing signer
+    /// evidence <c>Privon.Windows</c> reports (<see cref="ForegroundTargetSnapshot.ExecutableSignature"/>/
+    /// <see cref="ForegroundTargetSnapshot.SignerOrganization"/>) -- never any other certificate or
+    /// filesystem identity detail, none of which the fact model this type reads is even capable of
+    /// expressing.
+    ///
+    /// ORGANIZATION_COMPARISON: <see cref="StringComparison.Ordinal"/>, deliberately -- never
+    /// trimmed, never case-folded. A certificate subject Organization attribute is an exact
+    /// identifier, matching <see cref="SupportedPackageFamilyName"/>'s own PFN_COMPARISON
+    /// convention. <see cref="ExecutableSignatureResolution.NotInspected"/>/<see cref="ExecutableSignatureResolution.Unresolved"/>/
+    /// <see cref="ExecutableSignatureResolution.Untrusted"/> all fail closed here identically to how
+    /// a non-<see cref="PackageIdentityResolution.Resolved"/> package identity fails closed for
+    /// ChatGPT above -- only a definitive <see cref="ExecutableSignatureResolution.Trusted"/> result
+    /// is ever eligible, and only paired with an exact organization match.
+    ///
+    /// PACKAGE_GATE: requires <see cref="PackageIdentityResolution.NoPackage"/> exactly -- a
+    /// packaged process (however it might otherwise present) can never satisfy this rule, keeping
+    /// the ChatGPT and Claude rules structurally mutually exclusive (see <see cref="Match"/>).
+    /// </summary>
+    private const string SupportedClaudeProcessName = "claude";
+
+    /// <summary>See this type's own CLAUDE_RULE doc above -- the ONE approved current publisher
+    /// identity (Windows Multi-AI Authorization Contract Freeze, Gate 0B, real Authenticode
+    /// evidence read from the installed Claude Windows application).</summary>
+    private const string SupportedClaudeOrganization = "Anthropic, PBC";
+
+    /// <summary>
+    /// PRIVON 0.3.0 Gate 1B -- TARGET_RESULT: the typed multi-target authorization operation.
+    /// Returns the exact matched <see cref="SupportedTarget"/>, or <see langword="null"/> for
+    /// "unsupported" -- never a sentinel enum value (see <see cref="SupportedTarget"/>'s own doc).
+    /// The two rules below are evaluated independently and are structurally mutually exclusive
+    /// (<see cref="PackageIdentityResolution.Resolved"/> vs <see cref="PackageIdentityResolution.NoPackage"/>
+    /// can never both hold for one snapshot), so at most one can ever match. This is the ONLY
+    /// operation TargetGate exposes that knows about signer/publisher/PFN policy; it owns no native
+    /// process handle, no native file handle, no native trust-verification call of any kind, and no
+    /// reuse/cache lifetime -- those are exclusively <c>Privon.Windows</c>'s mechanical concern (see
+    /// <see cref="ForegroundTargetSnapshot"/>'s and <c>Win32ForegroundTargetSource</c>'s own docs).
+    /// </summary>
+    public static SupportedTarget? Match(ForegroundTargetSnapshot snapshot)
+    {
+        if (IsSupportedChatGptTarget(snapshot))
+            return SupportedTarget.ChatGpt;
+        if (IsSupportedClaudeTarget(snapshot))
+            return SupportedTarget.Claude;
+        return null;
+    }
 
     /// <summary>
     /// True only when ALL of: <paramref name="snapshot"/> is resolved; its process name equals
@@ -69,10 +121,25 @@ internal static class TargetGate
     /// <see langword="false"/> via the same ordinal string comparison -- no separate null check is
     /// needed or added. An unresolved snapshot is never treated as eligible -- see
     /// <see cref="ForegroundTargetSnapshot.IsResolved"/>'s own fail-closed contract.
+    ///
+    /// PRIVON 0.3.0 Gate 1B: now a thin wrapper over <see cref="Match"/> -- <c>Match(snapshot) is
+    /// not null</c> -- so every existing caller (six guarded-operation check points, the retry
+    /// controller, the decision-action resolver) keeps compiling and behaving byte-identically
+    /// without threading <see cref="SupportedTarget"/> through the clipboard pipeline, which does
+    /// not need it in 0.3.0.
     /// </summary>
-    public static bool IsSupportedTarget(ForegroundTargetSnapshot snapshot) =>
+    public static bool IsSupportedTarget(ForegroundTargetSnapshot snapshot) => Match(snapshot) is not null;
+
+    private static bool IsSupportedChatGptTarget(ForegroundTargetSnapshot snapshot) =>
         snapshot.IsResolved
-        && string.Equals(snapshot.ProcessName, SupportedProcessName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(snapshot.ProcessName, SupportedChatGptProcessName, StringComparison.OrdinalIgnoreCase)
         && snapshot.PackageIdentity == PackageIdentityResolution.Resolved
         && string.Equals(snapshot.PackageFamilyName, SupportedPackageFamilyName, StringComparison.Ordinal);
+
+    private static bool IsSupportedClaudeTarget(ForegroundTargetSnapshot snapshot) =>
+        snapshot.IsResolved
+        && string.Equals(snapshot.ProcessName, SupportedClaudeProcessName, StringComparison.OrdinalIgnoreCase)
+        && snapshot.PackageIdentity == PackageIdentityResolution.NoPackage
+        && snapshot.ExecutableSignature == ExecutableSignatureResolution.Trusted
+        && string.Equals(snapshot.SignerOrganization, SupportedClaudeOrganization, StringComparison.Ordinal);
 }

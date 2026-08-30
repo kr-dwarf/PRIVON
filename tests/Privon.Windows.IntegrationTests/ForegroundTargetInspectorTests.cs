@@ -139,12 +139,15 @@ public class ForegroundTargetInspectorTests
         // much smaller range) -- this deterministically exercises the "no such process" path
         // without depending on any specific process having exited during the test run.
         bool result = source.TryResolveConfirmedForegroundIdentity(
-            int.MaxValue, out string? processName, out var packageIdentity, out string? packageFamilyName);
+            int.MaxValue, out string? processName, out var packageIdentity, out string? packageFamilyName,
+            out var executableSignature, out string? signerOrganization);
 
         Assert.False(result);
         Assert.Null(processName);
         Assert.Equal(PackageIdentityResolution.Unresolved, packageIdentity);
         Assert.Null(packageFamilyName);
+        Assert.Equal(ExecutableSignatureResolution.NotInspected, executableSignature);
+        Assert.Null(signerOrganization);
     }
 
     // ---- 9. no stale prior successful identity reused after failure ----

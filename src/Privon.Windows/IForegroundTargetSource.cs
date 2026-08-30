@@ -65,10 +65,23 @@ internal interface IForegroundTargetSource
     /// (<see cref="PackageIdentityResolution.NoPackage"/> -- an ordinary, successful fact for an
     /// unpackaged process), or was inconclusive (<see cref="PackageIdentityResolution.Unresolved"/>);
     /// the last two are never conflated.
+    ///
+    /// PRIVON 0.3.0 Gate 1B -- <paramref name="executableSignature"/>/<paramref name="signerOrganization"/>
+    /// extend this SAME single-handle capture with the executable's Authenticode signature fact, for
+    /// the Claude Windows target. Signature inspection is attempted ONLY when
+    /// <paramref name="packageIdentity"/> resolves to <see cref="PackageIdentityResolution.NoPackage"/>
+    /// -- for every other package-identity outcome (including a failed/false overall call)
+    /// <paramref name="executableSignature"/> stays at its safe default
+    /// (<see cref="ExecutableSignatureResolution.NotInspected"/>) and <paramref name="signerOrganization"/>
+    /// stays <see langword="null"/>. FACTS_ONLY unchanged: this method never compares
+    /// <paramref name="signerOrganization"/> against any supported publisher -- that decision belongs
+    /// exclusively to <c>Privon.App</c>'s TargetGate.
     /// </summary>
     bool TryResolveConfirmedForegroundIdentity(
         uint expectedProcessId,
         out string? processName,
         out PackageIdentityResolution packageIdentity,
-        out string? packageFamilyName);
+        out string? packageFamilyName,
+        out ExecutableSignatureResolution executableSignature,
+        out string? signerOrganization);
 }
