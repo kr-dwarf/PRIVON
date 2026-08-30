@@ -7,7 +7,12 @@ namespace Privon.Windows.IntegrationTests;
 // FOREGROUND_EXECUTION_GUARD) be exercised without any real foreground window or process.
 // Defaults to a fully successful resolution so tests only need to override the specific step
 // they want to fail.
-internal sealed class FakeForegroundTargetSource : IForegroundTargetSource
+//
+// PRIVON 0.3.0 Gate 1C.1 -- implements IDisposable (additive, matching the real
+// Win32ForegroundTargetSource's own Gate 1B contract) so RED-6/RED-7 can prove
+// ClipboardChangeMonitor/ComposerTextReader's Dispose() genuinely reaches an injected disposable
+// IForegroundTargetSource -- through the SAME constructor parameter real production code uses.
+internal sealed class FakeForegroundTargetSource : IForegroundTargetSource, IDisposable
 {
     public nint ForegroundWindowResult { get; set; } = 1;
 
@@ -79,6 +84,15 @@ internal sealed class FakeForegroundTargetSource : IForegroundTargetSource
     public PackageIdentityResolution PackageIdentityValueAfter { get; set; } = PackageIdentityResolution.Unresolved;
     public string? PackageFamilyNameValueAfter { get; set; }
 
+    // PRIVON 0.3.0 Gate 1B -- signature-identity fields, additive: default to NotInspected/null so
+    // every pre-Gate-1B test (which never sets these) sees exactly the same values a
+    // default-initialized ForegroundTargetSnapshot already has, and every pre-Gate-1B assertion
+    // (which never inspects these two new fields) remains completely unaffected.
+    public ExecutableSignatureResolution ExecutableSignatureValue { get; set; } = ExecutableSignatureResolution.NotInspected;
+    public string? SignerOrganizationValue { get; set; }
+    public ExecutableSignatureResolution ExecutableSignatureValueAfter { get; set; } = ExecutableSignatureResolution.NotInspected;
+    public string? SignerOrganizationValueAfter { get; set; }
+
     /// <summary>
     /// BUG-004 Gate 2H.3 (E+) -- the single coherent identity resolution. Models production's own
     /// contract: ONE synthetic "process instance" backs BOTH the process-name and package-identity
@@ -88,7 +102,8 @@ internal sealed class FakeForegroundTargetSource : IForegroundTargetSource
     /// keeps exercising the identical behavior.
     /// </summary>
     public bool TryResolveConfirmedForegroundIdentity(
-        uint expectedProcessId, out string? processName, out PackageIdentityResolution packageIdentity, out string? packageFamilyName)
+        uint expectedProcessId, out string? processName, out PackageIdentityResolution packageIdentity,
+        out string? packageFamilyName, out ExecutableSignatureResolution executableSignature, out string? signerOrganization)
     {
         CallLog.Add(nameof(TryResolveConfirmedForegroundIdentity));
         ConfirmedIdentityCallCount++;
@@ -96,6 +111,8 @@ internal sealed class FakeForegroundTargetSource : IForegroundTargetSource
         processName = null;
         packageIdentity = PackageIdentityResolution.Unresolved;
         packageFamilyName = null;
+        executableSignature = ExecutableSignatureResolution.NotInspected;
+        signerOrganization = null;
 
         // Step 3/4 -- opening the handle and deriving both facts from it.
         bool resolved = UseAfterValues ? ProcessNameResultAfter : ProcessNameResult;
@@ -112,6 +129,16 @@ internal sealed class FakeForegroundTargetSource : IForegroundTargetSource
         processName = UseAfterValues ? ProcessNameValueAfter : ProcessNameValue;
         packageIdentity = UseAfterValues ? PackageIdentityValueAfter : PackageIdentityValue;
         packageFamilyName = UseAfterValues ? PackageFamilyNameValueAfter : PackageFamilyNameValue;
+        executableSignature = UseAfterValues ? ExecutableSignatureValueAfter : ExecutableSignatureValue;
+        signerOrganization = UseAfterValues ? SignerOrganizationValueAfter : SignerOrganizationValue;
         return true;
+    }
+
+    public int DisposeCallCount { get; private set; }
+
+    public void Dispose()
+    {
+        DisposeCallCount++;
+        CallLog.Add(nameof(Dispose));
     }
 }

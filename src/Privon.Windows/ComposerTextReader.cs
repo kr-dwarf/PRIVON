@@ -216,6 +216,11 @@ public sealed class ComposerTextReader : IDisposable
         }
 
         _workSignal.Dispose();
+
+        // PRIVON 0.3.0 Gate 1C.1 -- propagates disposal to the injected/default
+        // IForegroundTargetSource if it holds disposable native resources -- see
+        // ClipboardChangeMonitor.Dispose's own identical addition.
+        (_foregroundSource as IDisposable)?.Dispose();
     }
 
     // WORKER_SURVIVAL: this loop, and the per-request try/catch inside it, are the load-bearing

@@ -22,7 +22,7 @@ namespace Privon.Windows;
 /// itself; it exists purely to answer "what is the foreground process right now," synchronously,
 /// with no side effects.
 /// </summary>
-public sealed class ForegroundTargetInspector
+public sealed class ForegroundTargetInspector : IDisposable
 {
     private readonly IForegroundTargetSource _source;
 
@@ -46,4 +46,17 @@ public sealed class ForegroundTargetInspector
     /// </summary>
     public ForegroundTargetSnapshot Capture() =>
         ForegroundIdentityCapture.TryCapture(_source, out var snapshot) ? snapshot : default;
+
+    /// <summary>
+    /// PRIVON 0.3.0 Gate 1C.1 -- disposes the underlying <see cref="IForegroundTargetSource"/> if it
+    /// holds disposable native resources (the real production <c>Win32ForegroundTargetSource</c>
+    /// retains a process handle and an executable file handle as of Gate 1B/1C.1's process-bound
+    /// signer-evidence reuse). Idempotency is that implementation's own responsibility -- this
+    /// method adds no additional guard, matching this codebase's existing minimal-disposal
+    /// discipline (e.g. <see cref="ClipboardChangeMonitor.Dispose"/>).
+    /// </summary>
+    public void Dispose()
+    {
+        (_source as IDisposable)?.Dispose();
+    }
 }

@@ -193,6 +193,13 @@ internal sealed class PrivonAppComposition : IDisposable
     private ClipboardDecisionActionResolver? _resolver;
     private ClipboardDecisionSessionPublisher? _sessionPublisher;
 
+    // PRIVON 0.3.0 Gate 1C.1 -- held so this composition's own shutdown can reach it (Blocker 3:
+    // retained-handle lifecycle propagation). Previously a Start()-local variable never disposed by
+    // anything -- the real Win32ForegroundTargetSource it constructs by default now retains a
+    // process handle and an executable file handle (Gate 1B), so disposal must be wired here exactly
+    // like _composerReader/_monitor already are.
+    private ForegroundTargetCapture? _targetCapture;
+
     // PRIVON v0.2.1 Gate 3C -- the Settings UI's own backend seams. _store is retained (unlike the
     // read-only *Provider locals BuildGraph already constructs) purely so IsMasterKeyUnavailable
     // below can expose Storage's own metadata-only signal -- never a second, independently-drifting
@@ -395,7 +402,7 @@ internal sealed class PrivonAppComposition : IDisposable
         var readTransport = new ClipboardReadTransport(_monitor);
         var writeTransport = new ClipboardWriteTransport(_monitor);
         var composerReadTransport = new ComposerReadTransport(_composerReader);
-        var targetCapture = new ForegroundTargetCapture();
+        _targetCapture = new ForegroundTargetCapture();
         // Phase 0.2E: the second, independent trigger -- wraps this instance's own directly-owned
         // _foregroundChangeMonitor (never a second, freshly-constructed ForegroundChangeMonitor) so
         // that SESSION_LOCK/SHUTDOWN_ORDER's direct _foregroundChangeMonitor.Dispose() call and this
@@ -434,7 +441,7 @@ internal sealed class PrivonAppComposition : IDisposable
 
         _coordinator = new ClipboardPrivacyCoordinator(
             readTransport,
-            targetCapture,
+            _targetCapture,
             processor,
             writeTransport,
             _lifecycle,
@@ -448,7 +455,7 @@ internal sealed class PrivonAppComposition : IDisposable
         _resolver = new ClipboardDecisionActionResolver(
             _operationGate,
             _lifecycle,
-            targetCapture,
+            _targetCapture,
             readTransport,
             writeTransport,
             processor,
@@ -491,6 +498,7 @@ internal sealed class PrivonAppComposition : IDisposable
         Safe(() => _composerReader.Dispose());
         Safe(() => _monitor.Dispose());
         Safe(() => _foregroundChangeMonitor.Dispose());
+        Safe(() => _targetCapture?.Dispose());
         Safe(() => _operationGate?.Dispose());
         Safe(() => _diagnostics?.Dispose());
 
@@ -499,6 +507,7 @@ internal sealed class PrivonAppComposition : IDisposable
         _sessionPublisher = null;
         _verifier = null;
         _lifecycle = null;
+        _targetCapture = null;
         _operationGate = null;
         _diagnostics = null;
         _categorySettingsService = null;
@@ -540,6 +549,7 @@ internal sealed class PrivonAppComposition : IDisposable
         Step(() => _composerReader.Dispose());
         Step(() => _monitor.Dispose());
         Step(() => _foregroundChangeMonitor.Dispose());
+        Step(() => _targetCapture?.Dispose());
         Step(() => _operationGate?.Dispose());
         Step(() => _diagnostics?.Dispose());
 

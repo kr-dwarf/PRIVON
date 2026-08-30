@@ -78,12 +78,15 @@ public class PackageIdentityFactTests
         var source = new Win32ForegroundTargetSource();
 
         bool result = source.TryResolveConfirmedForegroundIdentity(
-            int.MaxValue, out string? processName, out var packageIdentity, out string? packageFamilyName);
+            int.MaxValue, out string? processName, out var packageIdentity, out string? packageFamilyName,
+            out var executableSignature, out string? signerOrganization);
 
         Assert.False(result);
         Assert.Null(processName);
         Assert.Equal(PackageIdentityResolution.Unresolved, packageIdentity);
         Assert.Null(packageFamilyName);
+        Assert.Equal(ExecutableSignatureResolution.NotInspected, executableSignature);
+        Assert.Null(signerOrganization);
     }
 
     // ---- FACT-003c (BUG-004 Gate 2H.3, rewritten): the REAL-Windows analog of RED-ID-009. This
@@ -110,12 +113,15 @@ public class PackageIdentityFactTests
             return;
 
         bool result = source.TryResolveConfirmedForegroundIdentity(
-            currentPid, out string? processName, out var packageIdentity, out string? packageFamilyName);
+            currentPid, out string? processName, out var packageIdentity, out string? packageFamilyName,
+            out var executableSignature, out string? signerOrganization);
 
         Assert.False(result);
         Assert.Null(processName);
         Assert.Equal(PackageIdentityResolution.Unresolved, packageIdentity);
         Assert.Null(packageFamilyName);
+        Assert.Equal(ExecutableSignatureResolution.NotInspected, executableSignature);
+        Assert.Null(signerOrganization);
     }
 
     // ---- FACT-004: the fact model structurally cannot express a package VERSION/PackageFullName/

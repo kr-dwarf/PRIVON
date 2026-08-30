@@ -535,6 +535,13 @@ public sealed class ClipboardChangeMonitor : IDisposable
         }
 
         _startupSignal.Dispose();
+
+        // PRIVON 0.3.0 Gate 1C.1 -- propagates disposal to the injected/default
+        // IForegroundTargetSource if it holds disposable native resources (the real production
+        // Win32ForegroundTargetSource retains a process handle and an executable file handle as of
+        // Gate 1B's process-bound signer-evidence reuse). Placed last, mirroring _startupSignal.Dispose()'s
+        // own position immediately after the idempotency guard is set.
+        (_foregroundSource as IDisposable)?.Dispose();
     }
 
     private void OwnerThreadMain()
