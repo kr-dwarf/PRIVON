@@ -451,4 +451,31 @@ public class Gate031E5C_NativeMessagingHostRegistrarRedTests
             "Manifest must be deleted BEFORE the registry leaf -- a leaf-deletion failure after this " +
             "order still leaves a provable, recoverable STALE state, never an unwitnessed orphan.");
     }
+
+    // ==================================================================
+    // 17 -- UNWITNESSED ORPHAN MANIFEST BOUNDARY, DIRECTLY THROUGH Install (Gate E5G.P3.B closure).
+    // Case 12 already proves Uninstall never adopts/deletes an unwitnessed orphan; this closes the
+    // matching Install-side gap: a file already sitting at the expected path with no registry
+    // witness proving PRIVON put it there must never be adopted (registry witness created over it)
+    // by a fresh Install either.
+    // ==================================================================
+
+    [Fact]
+    public void Gate031E5C_17_UnwitnessedOrphanManifest_InstallNeverAdopts_NoMutation()
+    {
+        var fake = new FakeHostRegistrationEnvironment();
+        var harness = BuildHarnessOrFail(fake, "Gate E5C case 17 (unwitnessed orphan manifest -- Install must never adopt)");
+        string expectedPath = NativeMessagingHostRegistrarTestHarness.ExpectedManifestPath(NativeMessagingBrowser.Chrome);
+        const string orphanContent = "{\"name\":\"leftover-from-a-manual-experiment-not-created-by-privon\"}";
+        fake.SeedManifest(expectedPath, orphanContent);
+
+        var actLog = InstallAndSnapshot(harness, fake, NativeMessagingBrowser.Chrome, ChromeSpec(harness));
+
+        Assert.False(fake.SubkeyExists(NativeMessagingBrowser.Chrome));
+        Assert.True(fake.ManifestUnchanged(expectedPath, orphanContent));
+        Assert.DoesNotContain(actLog, e => e.StartsWith("SetSubkeyDefaultValue(", StringComparison.Ordinal));
+        Assert.DoesNotContain(actLog, e => e.StartsWith("WriteManifest(", StringComparison.Ordinal));
+        Assert.DoesNotContain(actLog, e => e.StartsWith("DeleteManifest(", StringComparison.Ordinal));
+        Assert.DoesNotContain(actLog, e => e.StartsWith("DeleteSubkey(", StringComparison.Ordinal));
+    }
 }

@@ -1,7 +1,3 @@
-using System.IO;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-
 namespace Privon.App;
 
 /// <summary>
@@ -47,7 +43,7 @@ internal sealed class NativeMessagingHostRegistrar
     public void Install(NativeMessagingBrowser browser, NativeMessagingHostRegistrationSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
-        string expectedPath = ExpectedManifestPath(browser);
+        string expectedPath = NativeMessagingHostRegistrationLayout.ExpectedManifestPath(browser);
 
         if (_environment.SubkeyExists(browser))
         {
@@ -62,7 +58,7 @@ internal sealed class NativeMessagingHostRegistrar
             return;
         }
 
-        string manifestJson = BuildManifestJson(spec);
+        string manifestJson = NativeMessagingHostRegistrationLayout.BuildManifestJson(spec);
 
         // FROZEN ORDER: registry witness FIRST, manifest SECOND. If WriteManifest below throws, the
         // witness already committed leaves an ownership-provable STALE state -- never rolled back,
@@ -83,7 +79,7 @@ internal sealed class NativeMessagingHostRegistrar
             return;
         }
 
-        string expectedPath = ExpectedManifestPath(browser);
+        string expectedPath = NativeMessagingHostRegistrationLayout.ExpectedManifestPath(browser);
         string? currentDefault = _environment.GetSubkeyDefaultValue(browser);
         bool isWitnessed = !string.IsNullOrEmpty(currentDefault)
             && string.Equals(currentDefault, expectedPath, StringComparison.Ordinal);
@@ -106,38 +102,4 @@ internal sealed class NativeMessagingHostRegistrar
         _environment.DeleteSubkey(browser);
     }
 
-    /// <summary>The exact manifest path this registrar expects to own for <paramref name="browser"/>
-    /// (Gate E5D.B commander-frozen formula) -- deliberately internal and deterministic; the caller
-    /// never supplies a manifest path.</summary>
-    private static string ExpectedManifestPath(NativeMessagingBrowser browser)
-    {
-        string fileName = browser switch
-        {
-            NativeMessagingBrowser.Chrome => "chrome-host.json",
-            NativeMessagingBrowser.Edge => "edge-host.json",
-            _ => throw new ArgumentOutOfRangeException(nameof(browser), browser, "Unrecognized NativeMessagingBrowser value."),
-        };
-
-        string root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return Path.Combine(root, "PRIVON", "NativeMessaging", fileName);
-    }
-
-    /// <summary>Builds the complete, structurally valid Native Messaging manifest JSON for
-    /// <paramref name="spec"/> via System.Text.Json (never manual string concatenation). Exactly one
-    /// allowed_origins entry -- <paramref name="spec"/>'s own already-verified origin, never a
-    /// production allowlist or any invented identity.</summary>
-    private static string BuildManifestJson(NativeMessagingHostRegistrationSpec spec) =>
-        JsonSerializer.Serialize(new ManifestPayload(
-            Name: "com.privon.host",
-            Description: "PRIVON Native Messaging Host",
-            Path: spec.HostExecutablePath,
-            Type: "stdio",
-            AllowedOrigins: [spec.ExtensionOrigin]));
-
-    private sealed record ManifestPayload(
-        [property: JsonPropertyName("name")] string Name,
-        [property: JsonPropertyName("description")] string Description,
-        [property: JsonPropertyName("path")] string Path,
-        [property: JsonPropertyName("type")] string Type,
-        [property: JsonPropertyName("allowed_origins")] string[] AllowedOrigins);
 }

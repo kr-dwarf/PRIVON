@@ -56,6 +56,8 @@ public class PrivonAppUiBridgeTests
         public required FakeTrayIconSurface Tray { get; init; }
         public required FakeWindowsAutoStartRegistration AutoStartRegistration { get; init; }
         public required WindowsAutoStartCoordinator AutoStartCoordinator { get; init; }
+        public required FakeNativeMessagingHostRegistrationEnvironment RegistrationEnvironment { get; init; }
+        public required NativeMessagingHostRegistrationCoordinator RegistrationCoordinator { get; init; }
         public required List<FakeDecisionPromptSurface> CreatedSurfaces { get; init; }
         public required List<FakeSettingsSurface> CreatedSettingsSurfaces { get; init; }
         public required PrivonAppUiBridge Bridge { get; init; }
@@ -71,6 +73,8 @@ public class PrivonAppUiBridgeTests
         var tray = new FakeTrayIconSurface();
         var autoStartRegistration = new FakeWindowsAutoStartRegistration();
         var autoStartCoordinator = new WindowsAutoStartCoordinator(autoStartRegistration, () => currentExecutablePath);
+        var registrationEnvironment = new FakeNativeMessagingHostRegistrationEnvironment();
+        var registrationCoordinator = new NativeMessagingHostRegistrationCoordinator(registrationEnvironment, () => currentExecutablePath);
         var createdSurfaces = new List<FakeDecisionPromptSurface>();
         var createdSettingsSurfaces = new List<FakeSettingsSurface>();
 
@@ -97,7 +101,8 @@ public class PrivonAppUiBridgeTests
                 var surface = new FakeSettingsSurface();
                 createdSettingsSurfaces.Add(surface);
                 return surface;
-            });
+            },
+            registrationCoordinator);
 
         return new Harness
         {
@@ -108,6 +113,8 @@ public class PrivonAppUiBridgeTests
             Tray = tray,
             AutoStartRegistration = autoStartRegistration,
             AutoStartCoordinator = autoStartCoordinator,
+            RegistrationEnvironment = registrationEnvironment,
+            RegistrationCoordinator = registrationCoordinator,
             CreatedSurfaces = createdSurfaces,
             CreatedSettingsSurfaces = createdSettingsSurfaces,
             Bridge = bridge,
@@ -418,6 +425,63 @@ public class PrivonAppUiBridgeTests
         Assert.Equal(0, h.Tray.AutoStartToggleRequestedSubscriberCount);
     }
 
+    // ==================================================================
+    // PRIVON 0.3.1 Gate E5G.P3 -- REGISTRATION_STAYS_INERT: the ONE owned
+    // NativeMessagingHostRegistrationCoordinator must never be reached by ordinary tray lifecycle
+    // (construction, Start, Dispose) -- there is no tray button for it yet, and the E5G.P2 commander
+    // contract forbids every-startup provisioning. Zero registration mutation is proven directly
+    // against the SAME FakeNativeMessagingHostRegistrationEnvironment the harness's coordinator owns.
+    // ==================================================================
+
+    [Fact]
+    public void Construction_CausesZeroNativeMessagingRegistrationMutation()
+    {
+        var h = CreateHarness();
+
+        Assert.Empty(h.RegistrationEnvironment.CallLog);
+    }
+
+    [Fact]
+    public void Start_CausesZeroNativeMessagingRegistrationMutation()
+    {
+        var h = CreateHarness();
+
+        h.Bridge.Start();
+
+        Assert.Empty(h.RegistrationEnvironment.CallLog);
+    }
+
+    [Fact]
+    public void Dispose_DoesNotUninstallTheNativeMessagingHost()
+    {
+        var h = CreateHarness();
+        h.Bridge.Start();
+
+        h.Bridge.Dispose();
+
+        Assert.Empty(h.RegistrationEnvironment.CallLog);
+        Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => e.StartsWith("DeleteSubkey(", StringComparison.Ordinal));
+        Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => e.StartsWith("DeleteManifest(", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FullLifecycle_StartThenDispose_NeverReachesTheRegistrationCoordinator()
+    {
+        // No every-startup provisioning (E5G.P2 commander contract): a complete, ordinary
+        // Start()-then-Dispose() cycle -- including a decision published and a tray toggle raised --
+        // must never touch native messaging registration at all.
+        var h = CreateHarness();
+        h.Bridge.Start();
+
+        var g1 = h.Lifecycle.AdvanceOnClipboardNotification();
+        h.Publisher.TryPublish(g1, "raw text", Plan(Item1));
+        h.Tray.RaiseAutoStartToggleRequested();
+
+        h.Bridge.Dispose();
+
+        Assert.Empty(h.RegistrationEnvironment.CallLog);
+    }
+
     [Fact]
     public void Constructor_NullArguments_Throw()
     {
@@ -434,19 +498,22 @@ public class PrivonAppUiBridgeTests
         var pipeline = DetectionPipeline.CreateDefault();
         Func<bool> isUnavailable = () => false;
         Func<ISettingsSurface> settingsFactory = () => new FakeSettingsSurface();
+        var registrationCoordinator = new NativeMessagingHostRegistrationCoordinator(
+            new FakeNativeMessagingHostRegistrationEnvironment(), () => "C:\\PRIVON\\PRIVON.exe");
 
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(null!, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, null!, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, null!, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, null!, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, null!, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, null!, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, null!, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, null!, exceptionService, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, null!, pipeline, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, null!, isUnavailable, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, null!, settingsFactory));
-        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, null!));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(null!, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, null!, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, null!, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, null!, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, null!, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, null!, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, null!, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, null!, exceptionService, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, null!, pipeline, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, null!, isUnavailable, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, null!, settingsFactory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, null!, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new PrivonAppUiBridge(publisher, lifecycle, resolver, scheduler, tray, factory, autoStart, categoryService, exceptionService, pipeline, isUnavailable, settingsFactory, null!));
     }
 
     // ==================================================================
@@ -561,6 +628,7 @@ public class PrivonAppUiBridgeTests
     [InlineData(typeof(WindowsAutoStartCoordinator))]
     [InlineData(typeof(IWindowsAutoStartRegistration))]
     [InlineData(typeof(WindowsAutoStartRegistration))]
+    [InlineData(typeof(NativeMessagingHostRegistrationCoordinator))]
     public void Types_AreNotPublic(Type type)
     {
         Assert.False(type.IsPublic);
