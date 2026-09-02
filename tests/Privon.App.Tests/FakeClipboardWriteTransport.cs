@@ -15,6 +15,10 @@ internal sealed class FakeClipboardWriteTransport : IClipboardWriteTransport
     public List<uint> ReceivedSequences { get; } = [];
     public List<string> ReceivedReplacementTexts { get; } = [];
 
+    /// <summary>Gate 031F5C -- the exact authorizationFreshness argument received on each call, in
+    /// order (null for a Windows/no-freshness call).</summary>
+    public List<IClipboardAuthorizationFreshness?> ReceivedAuthorizationFreshness { get; } = [];
+
     public ClipboardWriteResult NextResult { get; set; } =
         ClipboardWriteResult.Failure(ClipboardWriteOutcome.NotRunning, mutated: false);
 
@@ -38,7 +42,8 @@ internal sealed class FakeClipboardWriteTransport : IClipboardWriteTransport
     private readonly System.Collections.Concurrent.ConcurrentQueue<ClipboardWriteResult> _scriptedWrites = new();
 
     public Task<ClipboardWriteResult> WriteTextIfSequenceMatchesAsync(
-        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText)
+        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText,
+        IClipboardAuthorizationFreshness? authorizationFreshness = null)
     {
         var result = _scriptedWrites.TryDequeue(out var scripted) ? scripted : NextResult;
 
@@ -53,6 +58,7 @@ internal sealed class FakeClipboardWriteTransport : IClipboardWriteTransport
         ReceivedExpectedTargets.Add(expectedTarget);
         ReceivedSequences.Add(expectedSequence);
         ReceivedReplacementTexts.Add(replacementText);
+        ReceivedAuthorizationFreshness.Add(authorizationFreshness);
         CallCount++;
 
         if (ThrowOnWrite is { } ex)

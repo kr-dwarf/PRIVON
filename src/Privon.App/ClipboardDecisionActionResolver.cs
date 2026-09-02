@@ -143,6 +143,7 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
     private readonly IClipboardWriteTransport _writeTransport;
     private readonly ClipboardPrivacyProcessor _processor;
     private readonly IClipboardComposerVerificationHandoff _verificationHandoff;
+    private readonly IWebClipboardAuthorizationSource? _webAuthorizationSource;
 
     public ClipboardDecisionActionResolver(
         IClipboardOperationGate operationGate,
@@ -151,7 +152,8 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
         IClipboardReadTransport readTransport,
         IClipboardWriteTransport writeTransport,
         ClipboardPrivacyProcessor processor,
-        IClipboardComposerVerificationHandoff verificationHandoff)
+        IClipboardComposerVerificationHandoff verificationHandoff,
+        IWebClipboardAuthorizationSource? webAuthorizationSource = null)
     {
         ArgumentNullException.ThrowIfNull(operationGate);
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -167,6 +169,10 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
         _writeTransport = writeTransport;
         _processor = processor;
         _verificationHandoff = verificationHandoff;
+        // Gate 031F5C -- optional, trailing, PRODUCTION_DEFAULT null: PrivonAppComposition passes
+        // nothing, so every Web decision action fails closed to Stale() before Phase E ships a
+        // concrete IWebClipboardAuthorizationSource. See ClipboardAuthorizationRouter's own doc.
+        _webAuthorizationSource = webAuthorizationSource;
     }
 
     /// <summary>
@@ -196,11 +202,18 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             if (!scope.Items.Contains(item)) return ClipboardDecisionActionResult.Stale();
 
             // I. FRESH_TARGET -- never the original session target, never reused from anywhere else.
+            // Gate 031F5C -- this is the resolver's OWN fresh authorization moment: a human decision
+            // delay is unbounded, so the coordinator attempt's (if any) Web authorization/freshness
+            // verifier is NEVER passed in or reused here -- the router is asked again, fresh.
             var target = _targetCapture.Capture();
-            if (!TargetGate.IsSupportedTarget(target)) return ClipboardDecisionActionResult.Stale();
+            var authorization = await ClipboardAuthorizationRouter.AuthorizeAsync(target, _webAuthorizationSource).ConfigureAwait(false);
+            if (authorization.Kind == ClipboardAuthorizationKind.Outside) return ClipboardDecisionActionResult.Stale();
+
+            IClipboardAuthorizationFreshness? freshness =
+                authorization.TryGetWeb(out _, out var webFreshness) ? webFreshness : null;
 
             // J. FRESH_GUARDED_READ -- never the original raw text, never reconstructed.
-            var readResult = await _readTransport.ReadTextSnapshotAsync(target).ConfigureAwait(false);
+            var readResult = await _readTransport.ReadTextSnapshotAsync(target, freshness).ConfigureAwait(false);
             if (readResult.Outcome != ClipboardReadOutcome.Success) return ClipboardDecisionActionResult.Stale();
 
             // K. POST_READ_ACTIVE_CHECK
@@ -273,7 +286,7 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
 
             // AD. GUARDED_WRITE -- exactly once, this attempt's own fresh target + fresh sequence.
             var writeResult = await _writeTransport.WriteTextIfSequenceMatchesAsync(
-                target, snapshot.SequenceNumber, replacementText).ConfigureAwait(false);
+                target, snapshot.SequenceNumber, replacementText, freshness).ConfigureAwait(false);
             clipboardMutated = writeResult.ClipboardMutated;
 
             // AE. WRITE_RESULT_MAPPING
@@ -295,15 +308,20 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
 
             scope.CommitResolved(postWriteStamp);
 
-            // AI. COMPOSER_VERIFICATION_HANDOFF (Phase 3C STEP33 audit, frozen) -- gated on this
-            // SAME final linearization check, never a separate/earlier/later one: only inside the
-            // branch that is about to report Applied(true, true) is a single Publish attempted,
-            // using this attempt's own already-captured target/replacementText and the scope's own
-            // immutable published Generation (never a fresh CurrentGeneration read). The returned
-            // bool is discarded -- no retry, no rollback of the already-committed scope/grants.
+            // AI. COMPOSER_VERIFICATION_HANDOFF (Phase 3C STEP33 audit, frozen; Gate 031F5C
+            // WEB_COMPOSER_EXCLUSION) -- gated on this SAME final linearization check, never a
+            // separate/earlier/later one: only inside the branch that is about to report
+            // Applied(true, true) is a single Publish attempted, using this attempt's own
+            // already-captured target/replacementText and the scope's own immutable published
+            // Generation (never a fresh CurrentGeneration read). A Web authorization NEVER publishes
+            // (the same B2 exclusion as the coordinator's own Publish site) -- this is the ONLY
+            // statement gated on authorization.Kind; scope.CommitResolved above and
+            // Applied(true, true) below are identical for both. The returned bool is discarded -- no
+            // retry, no rollback of the already-committed scope/grants.
             if (_lifecycle.IsActive(scope))
             {
-                _ = _verificationHandoff.Publish(target, replacementText, scope.Generation);
+                if (authorization.Kind != ClipboardAuthorizationKind.WebTarget)
+                    _ = _verificationHandoff.Publish(target, replacementText, scope.Generation);
                 return ClipboardDecisionActionResult.Applied(clipboardMutated: true, scopeCommitted: true);
             }
 

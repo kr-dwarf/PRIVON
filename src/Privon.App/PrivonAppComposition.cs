@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.ExceptionServices;
+using Privon.Browser;
 using Privon.Storage;
 using Privon.Windows;
 
@@ -200,6 +201,46 @@ internal sealed class PrivonAppComposition : IDisposable
     // like _composerReader/_monitor already are.
     private ForegroundTargetCapture? _targetCapture;
 
+    // PRIVON 0.3.1 Gate 031F4.3 -- the App-lifetime foreground epoch counter. Held so this
+    // composition can (a) call EstablishInitialEpoch only AFTER the native foreground hook is
+    // provably installed, and (b) dispose it -- unsubscribing its Changed handler -- in both the
+    // partial-startup rollback and the normal shutdown path, exactly like _targetCapture already is.
+    // Constructed in BuildGraph BEFORE the coordinator, which is what makes this tracker's own
+    // subscription strictly precede the coordinator's (TRACKER_SUBSCRIBES_FIRST, Gate 031F4.1).
+    private ForegroundEpochTracker? _epochTracker;
+
+    // PRIVON 0.3.1 Gate 031F6I.1 (E3) -- the Web channel host server's own isolated runtime. Started
+    // ONLY after Windows protection has already fully and successfully started (see Start(), below
+    // the existing try/catch), and constructed via a fully self-contained factory that never throws --
+    // a Web server startup failure must never prevent, or roll back, Windows clipboard protection
+    // (Gate 031F6I.1 B2). Disposed FIRST in Dispose(), independently contained, for the identical
+    // reason in reverse: a Web teardown failure must never block the Windows teardown steps below it.
+    private WebServerRuntime? _webServer;
+
+    // PRIVON 0.3.1 Gate E5F (SHARED_CHANNEL_TRUTH) -- constructed early, in BuildGraph, alongside the
+    // other shared roots -- BEFORE the Windows-side coordinator/resolver, and long before Start()
+    // reaches the Web server startup line below the try/catch. Construction alone has no observable
+    // side effect (no thread, no I/O, no listener) so building these here does not violate the frozen
+    // "Web server starts only after Windows protection has fully succeeded" ordering (Gate 031F6I.1
+    // B2) -- only WebServerRuntime.StartOrNull's OWN accept loop/pipe listener still start there. The
+    // SAME two instances are later handed to WebServerRuntime.StartOrNull, so the composed
+    // WebClipboardAuthorizationSource below and the real Web channel host server always consult
+    // identical channel truth -- never two independent registries that could disagree.
+    private WebChannelRegistry? _webRegistry;
+    private WebChannelManager? _webManager;
+
+    // PRIVON 0.3.1 Gate E5F -- the one production WebClipboardAuthorizationSource this composition
+    // ever constructs, built in BuildGraph against _webRegistry/_webManager (above) and the already-
+    // existing _targetCapture/_epochTracker fields, and threaded into both
+    // ClipboardPrivacyCoordinator's and ClipboardDecisionActionResolver's existing optional
+    // webAuthorizationSource constructor parameter -- never a second, independently-constructed
+    // instance. Production stays fail-closed regardless: WebExtensionOriginAllowlist.Production is
+    // still empty (E5D/E3-frozen, unchanged by this gate), so no real Native Messaging channel can
+    // ever reach the Accepted state this source's own decision-time bracket requires. Exposed via
+    // WebAuthorizationSource below; not IDisposable (see that type's own doc) so it needs no explicit
+    // teardown step in RollbackPartialStartup/Dispose beyond simply nulling the field.
+    private WebClipboardAuthorizationSource? _webAuthorizationSource;
+
     // PRIVON v0.2.1 Gate 3C -- the Settings UI's own backend seams. _store is retained (unlike the
     // read-only *Provider locals BuildGraph already constructs) purely so IsMasterKeyUnavailable
     // below can expose Storage's own metadata-only signal -- never a second, independently-drifting
@@ -344,6 +385,15 @@ internal sealed class PrivonAppComposition : IDisposable
     /// layer at all.</summary>
     internal bool IsMasterKeyUnavailable => _store?.IsMasterKeyUnavailable ?? false;
 
+    /// <summary>PRIVON 0.3.1 Gate E5F -- reachable once <see cref="Start"/> has completed
+    /// successfully, the one production <see cref="IWebClipboardAuthorizationSource"/> this
+    /// composition ever constructs (see <see cref="_webAuthorizationSource"/>'s own doc). Returns the
+    /// exact same instance on every read -- never a second, independently-constructed source.
+    /// <see langword="null"/> before a successful <see cref="Start"/>. Existence alone never
+    /// authorizes anything: <see cref="WebExtensionOriginAllowlist.Production"/> stays empty, so no
+    /// accepted Native Messaging session is ever reachable in production today.</summary>
+    internal IWebClipboardAuthorizationSource? WebAuthorizationSource => _webAuthorizationSource;
+
     /// <summary>
     /// Single-use, matching every other <c>Start</c> in this codebase's own exact precedent (e.g.
     /// <see cref="ClipboardChangeMonitor.Start"/>/<see cref="ClipboardPrivacyCoordinator.Start"/>) --
@@ -367,12 +417,32 @@ internal sealed class PrivonAppComposition : IDisposable
             _sessionLockNotification.Start();
             _composerReader.Start();
             _coordinator!.Start();
+
+            // Gate 031F4.3 -- INITIAL_EPOCH established LAST, and only here. ClipboardPrivacyCoordinator
+            // .Start() is what starts the foreground trigger (and therefore ForegroundChangeMonitor
+            // .Start(), which blocks until SetWinEventHook has provably succeeded), so by this line the
+            // native hook is live and every subsequent foreground transition is observed. Establishing
+            // an epoch any earlier would let epoch 1 span a transition that occurred before the hook
+            // existed -- the exact unobserved-startup-race the frozen
+            // UNESTABLISHED_ZERO_UNTIL_CAPTURE policy exists to prevent.
+            _epochTracker!.EstablishInitialEpoch();
         }
         catch
         {
             RollbackPartialStartup();
             throw;
         }
+
+        // Gate 031F6I.1 -- Web channel host server, started only AFTER Windows protection above has
+        // already fully succeeded. StartOrNull is fully self-contained and never throws, so a Web
+        // server startup failure (e.g. the pipe endpoint cannot be derived) simply leaves _webServer
+        // null; Windows protection, already running by this point, is entirely unaffected.
+        //
+        // Gate E5F SHARED_CHANNEL_TRUTH -- _webRegistry/_webManager (constructed earlier, in
+        // BuildGraph, with no side effect of their own) are handed to StartOrNull here so the real Web
+        // channel host server consults the exact same channel truth as the already-composed
+        // _webAuthorizationSource above.
+        _webServer = WebServerRuntime.StartOrNull(_webRegistry!, _webManager!);
     }
 
     // Constructs the complete object graph -- store/processor first (so a storage-construction
@@ -410,6 +480,25 @@ internal sealed class PrivonAppComposition : IDisposable
         // PerformCleanup, never by this type directly -- see this type's own START_ORDER doc) are
         // always operating on the exact SAME underlying native monitor.
         var foregroundTrigger = new ClipboardForegroundTrigger(_foregroundChangeMonitor);
+
+        // Gate 031F4.3 -- constructed here, BEFORE the coordinator below, so that its own
+        // constructor-time subscription to foregroundTrigger.Changed strictly precedes the
+        // coordinator's (which subscribes during ClipboardPrivacyCoordinator.Start). Both handlers
+        // run synchronously on the foreground monitor's single owner thread, so subscription order
+        // IS invocation order: the epoch has already advanced for a given foreground signal by the
+        // time the coordinator's own handling of that same signal runs. No epoch is established
+        // here -- see Start(), which does that only after the native hook is provably live.
+        _epochTracker = new ForegroundEpochTracker(foregroundTrigger);
+
+        // Gate E5F SHARED_CHANNEL_TRUTH -- constructed here (construction alone has no side effect;
+        // see this type's own _webRegistry/_webManager doc above), so the SAME instances can later be
+        // handed to WebServerRuntime.StartOrNull in Start(), after Windows protection has fully
+        // succeeded. _webAuthorizationSource is built against these plus the already-constructed
+        // _targetCapture/_epochTracker, and is the ONE instance threaded into both the coordinator and
+        // the resolver below.
+        _webRegistry = new WebChannelRegistry();
+        _webManager = new WebChannelManager(_webRegistry);
+        _webAuthorizationSource = new WebClipboardAuthorizationSource(_webManager, _webRegistry, _targetCapture, _epochTracker);
 
         _verifier = new ClipboardComposerVerifier(_lifecycle, composerReadTransport, _operationGate);
 
@@ -450,7 +539,8 @@ internal sealed class PrivonAppComposition : IDisposable
             _verifier,
             _verifier,
             diagnostics: _diagnostics,
-            foregroundTrigger: foregroundTrigger);
+            foregroundTrigger: foregroundTrigger,
+            webAuthorizationSource: _webAuthorizationSource);
 
         _resolver = new ClipboardDecisionActionResolver(
             _operationGate,
@@ -459,7 +549,8 @@ internal sealed class PrivonAppComposition : IDisposable
             readTransport,
             writeTransport,
             processor,
-            _verifier);
+            _verifier,
+            webAuthorizationSource: _webAuthorizationSource);
 
         // SESSION_LOCK_CALLBACK subscription -- last, since it closes over _lifecycle/_verifier,
         // which must already exist. Not started here (Start() is called separately, strictly before
@@ -498,11 +589,13 @@ internal sealed class PrivonAppComposition : IDisposable
         Safe(() => _composerReader.Dispose());
         Safe(() => _monitor.Dispose());
         Safe(() => _foregroundChangeMonitor.Dispose());
+        Safe(() => _epochTracker?.Dispose());
         Safe(() => _targetCapture?.Dispose());
         Safe(() => _operationGate?.Dispose());
         Safe(() => _diagnostics?.Dispose());
 
         _coordinator = null;
+        _epochTracker = null;
         _resolver = null;
         _sessionPublisher = null;
         _verifier = null;
@@ -513,6 +606,9 @@ internal sealed class PrivonAppComposition : IDisposable
         _categorySettingsService = null;
         _userExceptionService = null;
         _store = null;
+        _webAuthorizationSource = null;
+        _webManager = null;
+        _webRegistry = null;
     }
 
     /// <summary>
@@ -538,6 +634,13 @@ internal sealed class PrivonAppComposition : IDisposable
             catch (Exception ex) { firstFailure ??= ex; }
         }
 
+        // Gate 031F6I.1 -- Web server teardown FIRST (stops admitting new Web sessions immediately),
+        // fully contained by the same Step() swallowing every other step already relies on: a Web
+        // teardown failure (the frozen accept-loop-join-timeout InvalidOperationException) still lets
+        // every Windows teardown step below run to completion (Gate 031F6I.1 B2) -- it only becomes
+        // firstFailure, surfaced to the caller after everything else has already torn down.
+        Step(() => _webServer?.Dispose());
+
         Step(() =>
         {
             _sessionLockNotification.Locked -= OnSessionLocked;
@@ -549,6 +652,7 @@ internal sealed class PrivonAppComposition : IDisposable
         Step(() => _composerReader.Dispose());
         Step(() => _monitor.Dispose());
         Step(() => _foregroundChangeMonitor.Dispose());
+        Step(() => _epochTracker?.Dispose());
         Step(() => _targetCapture?.Dispose());
         Step(() => _operationGate?.Dispose());
         Step(() => _diagnostics?.Dispose());

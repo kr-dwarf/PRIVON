@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "PRIVON",
+  "version": "0.1.0",
+  "description": "PRIVON mechanical browser authorization runtime. No page content, DOM, or clipboard access of any kind.",
+  "permissions": ["nativeMessaging"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*",
+    "https://grok.com/*",
+    "https://chat.deepseek.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "minimum_chrome_version": "116"
+}

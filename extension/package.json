@@ -1,0 +1,10 @@
+{
+  "name": "privon-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "PRIVON MV3 mechanical browser authorization runtime. Zero npm dependencies -- tests use Node's built-in node:test runner only.",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Privon.App/Privon.App.csproj" />
+    <Project Path="src/Privon.Browser/Privon.Browser.csproj" />
     <Project Path="src/Privon.Core/Privon.Core.csproj" />
     <Project Path="src/Privon.Detection/Privon.Detection.csproj" />
     <Project Path="src/Privon.Storage/Privon.Storage.csproj" />

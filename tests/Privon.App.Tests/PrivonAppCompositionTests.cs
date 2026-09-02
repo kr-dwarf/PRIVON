@@ -1009,4 +1009,53 @@ public class PrivonAppCompositionTests
     // actual executable code, never prose that explains what a type deliberately does NOT do.
     private static string StripDocComments(string source) =>
         string.Join('\n', source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+
+    // ==================================================================
+    // PRIVON 0.3.1 Gate 031F4.3.1 -- C2-R17 composition-order proof, against the REAL composition.
+    //
+    // The Gate 031F4.3 version of this proof lived in the C2 test class and assembled a tracker and a
+    // coordinator BY HAND in the intended order. That proved the two components compose correctly,
+    // but it never touched PrivonAppComposition, so it would still have passed had BuildGraph's own
+    // order been reversed -- a false-green coverage gap for the composition claim specifically.
+    //
+    // This test closes that gap against the real graph, using this class's own already-established
+    // real-graph + private-field convention (see Start_CoordinatorStartsForegroundChangeMonitor...,
+    // which reads _foregroundChangeMonitor in exactly this way). No production API was added for it.
+    //
+    // Reverse-order sensitivity: the assertion reads the REAL multicast invocation list of the REAL
+    // ForegroundChangeMonitor.ForegroundChanged event after a REAL Start(). Multicast delegates are
+    // invoked in subscription order on the raising thread, so a BuildGraph that subscribed the
+    // coordinator before the tracker would place these handlers in the opposite order here and fail
+    // this test. Combined with the C2 class's own behavioral proof that the tracker's handler advances
+    // the epoch synchronously, this establishes the frozen guarantee end to end.
+    // ==================================================================
+    [Fact]
+    public void Start_SubscribesEpochTrackerBeforeCoordinator_AndEstablishesInitialEpochAfterMonitorStart()
+    {
+        using var composition = CreateWithRealGraph();
+        composition.Start();
+
+        var foregroundMonitor = GetField(composition, "_foregroundChangeMonitor")!;
+        var tracker = GetField(composition, "_epochTracker")!;
+        var coordinator = GetField(composition, "_coordinator")!;
+
+        // INITIAL_EPOCH established, and only after the native hook was live: Start() calls
+        // EstablishInitialEpoch strictly after _coordinator.Start(), which is what starts the
+        // foreground monitor. A tracker that was never established would still report 0 here.
+        Assert.Equal(1L, ((IForegroundEpochSource)tracker).CurrentEpoch);
+
+        // Real subscription order, read off the real event's own invocation list.
+        var handlers = ((MulticastDelegate?)GetField(foregroundMonitor, "ForegroundChanged"))
+            ?.GetInvocationList() ?? [];
+
+        int trackerIndex = Array.FindIndex(handlers, d => ReferenceEquals(d.Target, tracker));
+        int coordinatorIndex = Array.FindIndex(handlers, d => ReferenceEquals(d.Target, coordinator));
+
+        Assert.True(trackerIndex >= 0, "ForegroundEpochTracker is not subscribed to the real foreground-change event.");
+        Assert.True(coordinatorIndex >= 0, "ClipboardPrivacyCoordinator is not subscribed to the real foreground-change event.");
+        Assert.True(trackerIndex < coordinatorIndex,
+            "ForegroundEpochTracker must be subscribed BEFORE ClipboardPrivacyCoordinator so the epoch " +
+            "has already advanced when the coordinator handles the same foreground event. Actual " +
+            $"invocation-list positions: tracker={trackerIndex}, coordinator={coordinatorIndex}.");
+    }
 }

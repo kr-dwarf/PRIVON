@@ -187,6 +187,7 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
     private readonly IClipboardDiagnosticRecorder _diagnostics;
     private readonly IClipboardForegroundTrigger? _foregroundTrigger;
     private readonly IClipboardRetryDelay _retryDelay;
+    private readonly IWebClipboardAuthorizationSource? _webAuthorizationSource;
     private readonly Channel<ClipboardCoordinatorWorkItem> _mailbox;
     private readonly TimeSpan _workerStopTimeout;
     private readonly object _gate = new();
@@ -210,8 +211,9 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         IClipboardComposerVerificationInvalidation verificationInvalidation,
         IClipboardDiagnosticRecorder? diagnostics = null,
         IClipboardForegroundTrigger? foregroundTrigger = null,
-        IClipboardRetryDelay? retryDelay = null)
-        : this(transport, targetCapture, processor, writeTransport, notificationLifecycle, decisionSessionPublisher, operationGate, verificationHandoff, verificationInvalidation, stopTimeoutOverride: null, diagnostics: diagnostics, foregroundTrigger: foregroundTrigger, retryDelay: retryDelay)
+        IClipboardRetryDelay? retryDelay = null,
+        IWebClipboardAuthorizationSource? webAuthorizationSource = null)
+        : this(transport, targetCapture, processor, writeTransport, notificationLifecycle, decisionSessionPublisher, operationGate, verificationHandoff, verificationInvalidation, stopTimeoutOverride: null, diagnostics: diagnostics, foregroundTrigger: foregroundTrigger, retryDelay: retryDelay, webAuthorizationSource: webAuthorizationSource)
     {
     }
 
@@ -228,7 +230,8 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         TimeSpan? stopTimeoutOverride,
         IClipboardDiagnosticRecorder? diagnostics = null,
         IClipboardForegroundTrigger? foregroundTrigger = null,
-        IClipboardRetryDelay? retryDelay = null)
+        IClipboardRetryDelay? retryDelay = null,
+        IWebClipboardAuthorizationSource? webAuthorizationSource = null)
     {
         ArgumentNullException.ThrowIfNull(transport);
         ArgumentNullException.ThrowIfNull(targetCapture);
@@ -262,6 +265,11 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         // real fixed 250ms interval. A test injects FakeClipboardRetryDelay to drive the retry loop
         // in ProcessWorkItemAsync deterministically instead.
         _retryDelay = retryDelay ?? new ClipboardRetryDelay();
+        // Gate 031F5C -- optional, trailing, PRODUCTION_DEFAULT null: every real 0.3.1 launch before
+        // Phase E ships a concrete IWebClipboardAuthorizationSource passes nothing here, so every
+        // non-Windows target fails closed to ClipboardAuthorization.Outside (see
+        // ClipboardAuthorizationRouter's own PRODUCTION_DEFAULT doc). No production trusted fake.
+        _webAuthorizationSource = webAuthorizationSource;
         _workerStopTimeout = stopTimeoutOverride ?? WorkerStopTimeoutContractDefault;
 
         // CHANNEL_POLICY: capacity 1, DropOldest, single reader, MULTI writer (Phase 0.2D --
@@ -869,7 +877,11 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
     private async Task ProcessWorkItemAsync(ClipboardCoordinatorWorkItem item)
     {
         var expectedTarget = _targetCapture.Capture();
-        bool authorized = TargetGate.IsSupportedTarget(expectedTarget);
+        // Gate 031F5C -- AUTHORIZATION_ROUTING: the single shared router decides Windows-vs-Web-vs-
+        // Outside for this attempt. Evaluated BEFORE TryBeginEvaluation (so an unexpected exception
+        // here can never orphan an in-flight evaluation) and NEVER inside lock (_gate) below.
+        var authorization = await ClipboardAuthorizationRouter.AuthorizeAsync(expectedTarget, _webAuthorizationSource).ConfigureAwait(false);
+        bool authorized = authorization.Kind != ClipboardAuthorizationKind.Outside;
 
         if (item.Kind == ClipboardCoordinatorTriggerKind.ClipboardChanged)
         {
@@ -892,7 +904,7 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         if (!_notificationLifecycle.TryBeginEvaluation(claimedGeneration))
             return;
 
-        var outcome = await RunPrivacyPipelineAsync(expectedTarget, claimedGeneration).ConfigureAwait(false);
+        var outcome = await RunPrivacyPipelineAsync(expectedTarget, authorization, claimedGeneration).ConfigureAwait(false);
 
         for (int attempt = 2; outcome == ClipboardAttemptOutcome.AutonomousRetryEligible && attempt <= MaxAttemptsContractDefault; attempt++)
         {
@@ -911,13 +923,16 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
                 return;
 
             var freshTarget = _targetCapture.Capture();
-            if (!TargetGate.IsSupportedTarget(freshTarget))
+            // Gate 031F5C -- a genuinely NEW authorization moment for this retry attempt, never a
+            // reuse of the prior attempt's ClipboardAuthorization/Web verifier. Not inside lock (_gate).
+            var freshAuthorization = await ClipboardAuthorizationRouter.AuthorizeAsync(freshTarget, _webAuthorizationSource).ConfigureAwait(false);
+            if (freshAuthorization.Kind == ClipboardAuthorizationKind.Outside)
                 return;
 
             if (!_notificationLifecycle.TryBeginEvaluation(claimedGeneration))
                 return;
 
-            outcome = await RunPrivacyPipelineAsync(freshTarget, claimedGeneration).ConfigureAwait(false);
+            outcome = await RunPrivacyPipelineAsync(freshTarget, freshAuthorization, claimedGeneration).ConfigureAwait(false);
         }
     }
 
@@ -969,11 +984,19 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
     /// RAW-bearing value (<c>snapshot</c>, <c>outcome.WritePlan.ReplacementText</c>) is ever part of
     /// the returned value or reachable from it.
     /// </summary>
-    private async Task<ClipboardAttemptOutcome> RunPrivacyPipelineAsync(ForegroundTargetSnapshot target, long claimedGeneration)
+    private async Task<ClipboardAttemptOutcome> RunPrivacyPipelineAsync(
+        ForegroundTargetSnapshot target, ClipboardAuthorization authorization, long claimedGeneration)
     {
+        // Gate 031F5C -- the attempt-scoped freshness verifier, derived ONCE from `authorization`
+        // (never threaded as a separate/drifting bool or SupportedWebTarget? parameter). null for
+        // Windows (Outside never reaches this method); the SAME instance for both the guarded read
+        // and the guarded write of this one attempt when Web.
+        IClipboardAuthorizationFreshness? freshness =
+            authorization.TryGetWeb(out _, out var webFreshness) ? webFreshness : null;
+
         try
         {
-            var result = await _transport.ReadTextSnapshotAsync(target).ConfigureAwait(false);
+            var result = await _transport.ReadTextSnapshotAsync(target, freshness).ConfigureAwait(false);
             Diagnose(ClipboardDiagnosticEvent.GuardedReadCompleted(
                 claimedGeneration, result.Outcome, result.Snapshot?.SequenceNumber, result.Snapshot?.HasReliableSequence));
 
@@ -1025,7 +1048,7 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
                 }
 
                 var writeResult = await _writeTransport.WriteTextIfSequenceMatchesAsync(
-                    target, snapshot.SequenceNumber, outcome.WritePlan.ReplacementText).ConfigureAwait(false);
+                    target, snapshot.SequenceNumber, outcome.WritePlan.ReplacementText, freshness).ConfigureAwait(false);
 
                 // APP_MUTATED_UNVERIFIED_WRITE_POLICY / APP_WRITE_SUCCESS_NOT_VERIFIED:
                 // classification only -- no retry, no rollback, no ProtectionState transition, no
@@ -1037,17 +1060,25 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
                 Diagnose(ClipboardDiagnosticEvent.GuardedWriteCompleted(
                     claimedGeneration, writeResult.Outcome, writeResult.ClipboardMutated, verified));
 
-                // COMPOSER_VERIFICATION_HANDOFF (Phase 3C STEP31/31.1/32, implemented here): ONLY on
-                // a classified-verified rewrite, exactly one Publish call using THIS attempt's own
-                // (target, replacementText, claimedGeneration) -- never on write failure,
-                // mutated-unverified, or any other outcome. The returned bool is deliberately never
-                // used to alter control flow (as of Phase 3C STEP41 it is additionally forwarded to
-                // Diagnose for manual-QA correlation only), matching every other discarded-bool
-                // handoff in this method.
+                // COMPOSER_VERIFICATION_HANDOFF (Phase 3C STEP31/31.1/32; Gate 031F5C WEB_COMPOSER_
+                // EXCLUSION): ONLY on a classified-verified rewrite, and ONLY for a Windows
+                // authorization, exactly one Publish call using THIS attempt's own (target,
+                // replacementText, claimedGeneration) -- never on write failure, mutated-unverified,
+                // or any other outcome. A Web authorization NEVER publishes (Gate 031F5A section 16:
+                // B2 composer/UIA verification is architecturally excluded for Web, never a lesser
+                // success) -- this is the ONLY statement gated on authorization.Kind; Success/
+                // CompleteEvaluation/Done below are identical for both. The returned bool is
+                // deliberately never used to alter control flow (as of Phase 3C STEP41 it is
+                // additionally forwarded to Diagnose for manual-QA correlation only), matching every
+                // other discarded-bool handoff in this method.
                 if (verified)
                 {
-                    bool published = _verificationHandoff.Publish(target, outcome.WritePlan.ReplacementText, claimedGeneration);
-                    Diagnose(ClipboardDiagnosticEvent.ComposerVerificationHandoffPublished(claimedGeneration, published));
+                    if (authorization.Kind != ClipboardAuthorizationKind.WebTarget)
+                    {
+                        bool published = _verificationHandoff.Publish(target, outcome.WritePlan.ReplacementText, claimedGeneration);
+                        Diagnose(ClipboardDiagnosticEvent.ComposerVerificationHandoffPublished(claimedGeneration, published));
+                    }
+
                     Diagnose(ClipboardDiagnosticEvent.AttemptTerminal(claimedGeneration, ClipboardDiagnosticTerminalReason.Success));
                     _notificationLifecycle.CompleteEvaluation(claimedGeneration);
                     return ClipboardAttemptOutcome.Done;

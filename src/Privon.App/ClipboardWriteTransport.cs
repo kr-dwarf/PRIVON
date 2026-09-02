@@ -33,8 +33,9 @@ internal sealed class ClipboardWriteTransport : IClipboardWriteTransport, IDispo
     }
 
     public Task<ClipboardWriteResult> WriteTextIfSequenceMatchesAsync(
-        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText) =>
-        _monitor.WriteTextIfSequenceMatchesAsync(expectedTarget, expectedSequence, replacementText);
+        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText,
+        IClipboardAuthorizationFreshness? authorizationFreshness = null) =>
+        _monitor.WriteTextIfSequenceMatchesAsync(expectedTarget, expectedSequence, replacementText, authorizationFreshness);
 
     public void Dispose() => _monitor.Dispose();
 }

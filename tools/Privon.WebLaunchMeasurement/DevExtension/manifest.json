@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "PRIVON Dev Measurement (E5B, non-shipping)",
+  "version": "0.0.1",
+  "description": "Internal dev-only tool used to measure real Chrome/Edge Native Messaging launch shape (Gate E5B). Connects to the com.privon.devmeasure host only. Not published, not distributed, not part of the PRIVON product.",
+  "permissions": ["nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
