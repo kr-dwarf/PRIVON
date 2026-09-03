@@ -74,6 +74,7 @@ internal sealed class SettingsCoordinator : IDisposable
     private readonly DetectionPipeline _pipeline;
     private readonly Func<bool> _isMasterKeyUnavailable;
     private readonly Func<ISettingsSurface> _surfaceFactory;
+    private readonly NativeMessagingHostRegistrationCoordinator _registrationCoordinator;
 
     // NO_LOCK (this Gate's own CONCURRENCY_CONTRACT instruction, frozen): every public member of
     // this type is reachable ONLY from the single WPF Dispatcher thread in production -- see class
@@ -89,18 +90,21 @@ internal sealed class SettingsCoordinator : IDisposable
         UserExceptionService exceptionService,
         DetectionPipeline pipeline,
         Func<bool> isMasterKeyUnavailable,
-        Func<ISettingsSurface> surfaceFactory)
+        Func<ISettingsSurface> surfaceFactory,
+        NativeMessagingHostRegistrationCoordinator registrationCoordinator)
     {
         ArgumentNullException.ThrowIfNull(categoryService);
         ArgumentNullException.ThrowIfNull(exceptionService);
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(isMasterKeyUnavailable);
         ArgumentNullException.ThrowIfNull(surfaceFactory);
+        ArgumentNullException.ThrowIfNull(registrationCoordinator);
         _categoryService = categoryService;
         _exceptionService = exceptionService;
         _pipeline = pipeline;
         _isMasterKeyUnavailable = isMasterKeyUnavailable;
         _surfaceFactory = surfaceFactory;
+        _registrationCoordinator = registrationCoordinator;
     }
 
     /// <summary>The tray's single Settings entry point. ONE_CURRENT_SETTINGS_WINDOW: activates the
@@ -133,6 +137,8 @@ internal sealed class SettingsCoordinator : IDisposable
         surface.DeleteExceptionRequested += (_, value) =>
             HandleMutation(surface, () => _exceptionService.Delete(value.PiiType, value.CanonicalValue));
         surface.AddExceptionRequested += (_, request) => HandleAddException(surface, request);
+        surface.ChromeNativeMessagingProvisionRequested += (_, _) => HandleChromeMutation(surface, ProvisionChrome);
+        surface.ChromeNativeMessagingRepairRequested += (_, _) => HandleChromeMutation(surface, RepairChrome);
     }
 
     private void OnSurfaceClosed(ISettingsSurface surface)
@@ -161,6 +167,35 @@ internal sealed class SettingsCoordinator : IDisposable
         }
 
         RenderCurrentState(surface, statusMessage);
+    }
+
+    // COMMANDER CORRECTION (Gate E5G.1C) -- FAILED_ACTION_MUST_SURFACE: unlike every other mutation
+    // above, an explicit Chrome Provision/Repair click cannot use the generic HandleMutation +
+    // InspectChrome() re-read pair -- NativeMessagingHostRegistrationCoordinator.Provision/Repair's
+    // own return value is FROZEN authority for what THAT attempt actually did (their own class doc:
+    // "a non-throwing Install call is never itself treated as success"), and a SEPARATE, independent
+    // Inspect() call afterward can legitimately observe a DIFFERENT state (e.g. a failed write that
+    // left zero trace re-Inspects as Fresh, not Failed) -- discarding the action's own outcome and
+    // substituting that independent observation would silently misrepresent a real failure as
+    // "nothing happened" or "still needs repair," never as the failure it was. This method therefore
+    // takes the mutation's OWN readiness return value and threads it directly into this one render
+    // as an override -- it never calls InspectChrome() a second time for this render. The underlying
+    // ownership contract itself is never touched by this: the very next unrelated render (reopen,
+    // another toggle) calls RenderCurrentState with no override and InspectChrome() resumes being
+    // the sole source of truth, exactly as before.
+    private void HandleChromeMutation(ISettingsSurface surface, Func<NativeMessagingRegistrationReadiness> mutate)
+    {
+        NativeMessagingRegistrationReadiness result;
+        try
+        {
+            result = mutate();
+        }
+        catch
+        {
+            result = NativeMessagingRegistrationReadiness.Failed;
+        }
+
+        RenderCurrentState(surface, statusMessage: null, chromeReadinessOverride: result);
     }
 
     // CANONICALIZATION -- see class doc. Every rejection path below reloads authoritative state
@@ -210,7 +245,12 @@ internal sealed class SettingsCoordinator : IDisposable
     // remains the SOLE authoritative degraded-storage signal; a real ISettingsSurface renders both
     // facts as independent, simultaneously-visible presentation concerns -- see SettingsWindow's
     // own RenderState.
-    private void RenderCurrentState(ISettingsSurface surface, string? statusMessage = null)
+    // PRIVON 0.3.1 Gate E5G.1C, corrected: <paramref name="chromeReadinessOverride"/> exists ONLY
+    // for HandleChromeMutation's own use -- every other caller (ShowRequested, every non-Chrome
+    // HandleMutation/HandleAddException path) omits it, so ChromeNativeMessagingReadiness continues
+    // to come from a fresh, independent InspectChrome() read exactly as before this correction.
+    private void RenderCurrentState(
+        ISettingsSurface surface, string? statusMessage = null, NativeMessagingRegistrationReadiness? chromeReadinessOverride = null)
     {
         var categories = _categoryService.Load();
         var exceptions = _exceptionService.List();
@@ -221,7 +261,43 @@ internal sealed class SettingsCoordinator : IDisposable
             EmailEnabled: categories.EmailEnabled,
             Exceptions: exceptions,
             MasterKeyUnavailable: unavailable,
-            StatusMessage: statusMessage));
+            StatusMessage: statusMessage,
+            ChromeNativeMessagingReadiness: chromeReadinessOverride ?? InspectChrome()));
+    }
+
+    // PRIVON 0.3.1 Gate E5G.1C -- CHROME_PROVISIONING: the verified Chrome identity is resolved
+    // exclusively through VerifiedBrowserExtensionIdentities (never invented/guessed here), and every
+    // readiness/mutation call is routed through the single ALREADY-OWNED
+    // NativeMessagingHostRegistrationCoordinator this type was constructed with -- never a second,
+    // independently-constructed registrar/environment/coordinator instance. InspectChrome is
+    // read-only (called on every render, including on open) and safe to run unconditionally;
+    // ProvisionChrome/RepairChrome are reachable ONLY from their own explicit WireSurface
+    // subscriptions above, never from RenderCurrentState/ShowRequested itself.
+    private NativeMessagingRegistrationReadiness InspectChrome()
+    {
+        if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Chrome, out var identity))
+            return NativeMessagingRegistrationReadiness.Failed;
+
+        return _registrationCoordinator.Inspect(identity.Browser, identity.NativeMessagingOrigin);
+    }
+
+    // Returns the coordinator's OWN Provision() outcome -- see HandleChromeMutation's own doc for
+    // why that exact value, not a subsequent independent Inspect(), is what gets displayed.
+    private NativeMessagingRegistrationReadiness ProvisionChrome()
+    {
+        if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Chrome, out var identity))
+            return NativeMessagingRegistrationReadiness.Failed;
+
+        return _registrationCoordinator.Provision(identity.Browser, identity.NativeMessagingOrigin);
+    }
+
+    // Returns the coordinator's OWN Repair() outcome -- same reasoning as ProvisionChrome.
+    private NativeMessagingRegistrationReadiness RepairChrome()
+    {
+        if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Chrome, out var identity))
+            return NativeMessagingRegistrationReadiness.Failed;
+
+        return _registrationCoordinator.Repair(identity.Browser, identity.NativeMessagingOrigin);
     }
 
     /// <summary>Idempotent. Closes whatever surface is currently tracked, if any -- ensures no

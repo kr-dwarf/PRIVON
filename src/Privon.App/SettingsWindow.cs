@@ -61,6 +61,16 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     private readonly System.Windows.Controls.Button _resetExceptionsButton;
     private readonly System.Windows.Controls.Button _resetProtectionScopeButton;
 
+    // PRIVON 0.3.1 Gate E5G.1C -- the minimum functional Chrome Native Messaging setup surface.
+    // _chromeStatusText always reflects the most recent SettingsViewState.ChromeNativeMessagingReadiness
+    // (RENDER_ONLY, same discipline as every other control here); the two action buttons are
+    // mutually-exclusive-visible per readiness (see RenderChromeSection) -- never both shown at once,
+    // and never shown at all for Ready/ForeignBlocked/OrphanBlocked/Failed (no adopt/delete action
+    // exists for a blocked or already-ready state).
+    private readonly TextBlock _chromeStatusText;
+    private readonly System.Windows.Controls.Button _chromeSetupButton;
+    private readonly System.Windows.Controls.Button _chromeRepairButton;
+
     // DEGRADED_STORAGE_STATUS_CORRECTION (PRIVON v0.2.1 Gate 3C audit correction): two
     // INDEPENDENT regions, never one shared field -- MasterKeyUnavailable (degraded-storage
     // explanation) and StatusMessage (transient action/mutation feedback) are two distinct facts
@@ -130,6 +140,13 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         listButtons.Children.Add(_deleteSelectedButton);
         listButtons.Children.Add(_resetExceptionsButton);
 
+        var chromeHeader = new TextBlock { Text = "Chrome Web/AI Protection Setup", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
+        _chromeStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 4) };
+        _chromeSetupButton = new System.Windows.Controls.Button { Content = "Set up", Margin = new Thickness(16, 0, 16, 4), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _chromeSetupButton.Click += (_, _) => ChromeNativeMessagingProvisionRequested?.Invoke(this, EventArgs.Empty);
+        _chromeRepairButton = new System.Windows.Controls.Button { Content = "Repair", Margin = new Thickness(16, 0, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _chromeRepairButton.Click += (_, _) => ChromeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
+
         var panel = new StackPanel();
         panel.Children.Add(_degradedBannerText);
         panel.Children.Add(_statusText);
@@ -143,6 +160,10 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         panel.Children.Add(_addButton);
         panel.Children.Add(_exceptionList);
         panel.Children.Add(listButtons);
+        panel.Children.Add(chromeHeader);
+        panel.Children.Add(_chromeStatusText);
+        panel.Children.Add(_chromeSetupButton);
+        panel.Children.Add(_chromeRepairButton);
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     }
 
@@ -158,6 +179,8 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     public event EventHandler<AddExceptionRequest>? AddExceptionRequested;
     public event EventHandler<UserExceptionValue>? DeleteExceptionRequested;
     public event EventHandler? ResetExceptionsRequested;
+    public event EventHandler? ChromeNativeMessagingProvisionRequested;
+    public event EventHandler? ChromeNativeMessagingRepairRequested;
 
     void ISettingsSurface.Show() => Show();
 
@@ -215,6 +238,31 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         // PRIVACY_UI: the raw entry field is always cleared on a fresh render -- never left echoing
         // a value from a prior (possibly rejected) attempt.
         _valueBox.Clear();
+
+        RenderChromeSection(state.ChromeNativeMessagingReadiness);
+    }
+
+    // PRIVON 0.3.1 Gate E5G.1C -- no registry path, manifest content, or other internal mechanics
+    // ever reaches this text; each readiness maps to one short, generic status line. The two action
+    // buttons are each visible ONLY for the one readiness they are meaningful for -- Ready/
+    // ForeignBlocked/OrphanBlocked/Failed show neither (no adopt/delete/silent-repair action exists
+    // for any of those).
+    private void RenderChromeSection(NativeMessagingRegistrationReadiness readiness)
+    {
+        _chromeStatusText.Text = readiness switch
+        {
+            NativeMessagingRegistrationReadiness.Fresh => "Chrome: not set up",
+            NativeMessagingRegistrationReadiness.Ready => "Chrome: ready",
+            NativeMessagingRegistrationReadiness.OwnedNeedsRepair => "Chrome: needs repair",
+            NativeMessagingRegistrationReadiness.ForeignBlocked => "Chrome: blocked (already used by another program)",
+            NativeMessagingRegistrationReadiness.OrphanBlocked => "Chrome: blocked (conflicting file present)",
+            _ => "Chrome: unavailable",
+        };
+
+        _chromeSetupButton.Visibility = readiness == NativeMessagingRegistrationReadiness.Fresh
+            ? Visibility.Visible : Visibility.Collapsed;
+        _chromeRepairButton.Visibility = readiness == NativeMessagingRegistrationReadiness.OwnedNeedsRepair
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void RaiseAddException()

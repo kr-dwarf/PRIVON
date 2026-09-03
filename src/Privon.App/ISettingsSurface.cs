@@ -47,6 +47,21 @@ internal interface ISettingsSurface
     /// <summary>Raised when the user confirms "Reset exceptions."</summary>
     event EventHandler? ResetExceptionsRequested;
 
+    /// <summary>PRIVON 0.3.1 Gate E5G.1C -- raised when the user chooses the explicit Chrome Native
+    /// Messaging setup action. Only meaningful while the most recently rendered
+    /// <see cref="SettingsViewState.ChromeNativeMessagingReadiness"/> is
+    /// <see cref="NativeMessagingRegistrationReadiness.Fresh"/> -- <see cref="SettingsCoordinator"/>,
+    /// never this surface, decides what a raise in any other state actually does (the frozen
+    /// coordinator's own Provision contract already no-ops outside Fresh).</summary>
+    event EventHandler? ChromeNativeMessagingProvisionRequested;
+
+    /// <summary>PRIVON 0.3.1 Gate E5G.1C -- raised when the user chooses the explicit Chrome Native
+    /// Messaging repair action. A SEPARATE action from
+    /// <see cref="ChromeNativeMessagingProvisionRequested"/> -- only meaningful while readiness is
+    /// <see cref="NativeMessagingRegistrationReadiness.OwnedNeedsRepair"/>; never auto-invoked by
+    /// opening Settings or by a Provision raise.</summary>
+    event EventHandler? ChromeNativeMessagingRepairRequested;
+
     /// <summary>Displays the surface for the first time in its current lifecycle (a fresh
     /// construction, per ONE_CURRENT_SETTINGS_WINDOW -- see <see cref="SettingsCoordinator"/>'s own
     /// doc). Unlike <see cref="IDecisionPromptSurface.Show"/>, this surface activates normally --

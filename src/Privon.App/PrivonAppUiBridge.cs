@@ -51,13 +51,15 @@ namespace Privon.App;
 /// registration coordinator), mirroring exactly how it already owns the ONE
 /// <see cref="WindowsAutoStartCoordinator"/>: supplied fully-constructed, never built internally
 /// (matching the auto-start precedent's own shape, since both wrap a narrow OS-mechanics seam this
-/// type itself never touches directly). REGISTRATION_STAYS_INERT (E5G.P2 commander contract, frozen):
-/// neither this constructor nor <see cref="Start"/> nor <see cref="Dispose"/> ever calls
-/// <see cref="NativeMessagingHostRegistrationCoordinator.Inspect"/>/<c>Provision</c>/<c>Repair</c> --
-/// with no verified production extension origin yet supplied by any caller, provisioning stays
-/// unreachable from ordinary tray lifecycle. No tray button exists for it yet; the coordinator is
-/// owned here purely so a later, separate provisioning workflow (E5G.1/E5G.2) has exactly one place
-/// to reach it from, never a second independently-constructed instance.
+/// type itself never touches directly). REGISTRATION_STAYS_INERT (E5G.P2 commander contract, frozen,
+/// re-confirmed at Gate E5G.1C): neither this constructor nor <see cref="Start"/> nor
+/// <see cref="Dispose"/> ever calls <see cref="NativeMessagingHostRegistrationCoordinator.Inspect"/>/
+/// <c>Provision</c>/<c>Repair</c> -- provisioning stays unreachable from ordinary tray lifecycle. No
+/// tray button exists for it. Gate E5G.1C wires this SAME coordinator instance through, unchanged,
+/// to the ONE <see cref="SettingsCoordinator"/> this type also owns (see that type's own
+/// CHROME_PROVISIONING doc) -- the explicit Chrome Native Messaging setup/repair actions now live
+/// entirely behind Settings, never here and never a second independently-constructed coordinator
+/// instance.
 /// </summary>
 internal sealed class PrivonAppUiBridge : IDisposable
 {
@@ -107,7 +109,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
         _registrationCoordinator = registrationCoordinator;
         _promptCoordinator = new DecisionPromptCoordinator(sessionPublisher, lifecycle, resolver, scheduler, promptSurfaceFactory);
         _settingsCoordinator = new SettingsCoordinator(
-            categorySettingsService, userExceptionService, detectionPipeline, isMasterKeyUnavailable, settingsSurfaceFactory);
+            categorySettingsService, userExceptionService, detectionPipeline, isMasterKeyUnavailable, settingsSurfaceFactory,
+            registrationCoordinator);
     }
 
     /// <summary>The only production construction path -- wires the real

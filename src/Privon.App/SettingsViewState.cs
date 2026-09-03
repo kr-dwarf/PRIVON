@@ -18,4 +18,5 @@ internal sealed record SettingsViewState(
     bool EmailEnabled,
     IReadOnlyList<UserExceptionValue> Exceptions,
     bool MasterKeyUnavailable,
-    string? StatusMessage);
+    string? StatusMessage,
+    NativeMessagingRegistrationReadiness ChromeNativeMessagingReadiness = NativeMessagingRegistrationReadiness.Failed);
