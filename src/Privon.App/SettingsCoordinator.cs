@@ -139,6 +139,8 @@ internal sealed class SettingsCoordinator : IDisposable
         surface.AddExceptionRequested += (_, request) => HandleAddException(surface, request);
         surface.ChromeNativeMessagingProvisionRequested += (_, _) => HandleChromeMutation(surface, ProvisionChrome);
         surface.ChromeNativeMessagingRepairRequested += (_, _) => HandleChromeMutation(surface, RepairChrome);
+        surface.EdgeNativeMessagingProvisionRequested += (_, _) => HandleEdgeMutation(surface, ProvisionEdge);
+        surface.EdgeNativeMessagingRepairRequested += (_, _) => HandleEdgeMutation(surface, RepairEdge);
     }
 
     private void OnSurfaceClosed(ISettingsSurface surface)
@@ -198,6 +200,25 @@ internal sealed class SettingsCoordinator : IDisposable
         RenderCurrentState(surface, statusMessage: null, chromeReadinessOverride: result);
     }
 
+    // PRIVON 0.3.1 Gate E5G.1G -- the exact Edge counterpart of HandleChromeMutation, same reasoning:
+    // Provision()/Repair()'s own return value is the authority for what THAT click did, threaded
+    // directly into this one render as an override rather than discarded in favor of a second,
+    // independent InspectEdge() read.
+    private void HandleEdgeMutation(ISettingsSurface surface, Func<NativeMessagingRegistrationReadiness> mutate)
+    {
+        NativeMessagingRegistrationReadiness result;
+        try
+        {
+            result = mutate();
+        }
+        catch
+        {
+            result = NativeMessagingRegistrationReadiness.Failed;
+        }
+
+        RenderCurrentState(surface, statusMessage: null, edgeReadinessOverride: result);
+    }
+
     // CANONICALIZATION -- see class doc. Every rejection path below reloads authoritative state
     // alongside its own distinct, generic, non-content-bearing status message -- request.RawValue
     // itself is never placed into any message.
@@ -245,12 +266,16 @@ internal sealed class SettingsCoordinator : IDisposable
     // remains the SOLE authoritative degraded-storage signal; a real ISettingsSurface renders both
     // facts as independent, simultaneously-visible presentation concerns -- see SettingsWindow's
     // own RenderState.
-    // PRIVON 0.3.1 Gate E5G.1C, corrected: <paramref name="chromeReadinessOverride"/> exists ONLY
-    // for HandleChromeMutation's own use -- every other caller (ShowRequested, every non-Chrome
-    // HandleMutation/HandleAddException path) omits it, so ChromeNativeMessagingReadiness continues
-    // to come from a fresh, independent InspectChrome() read exactly as before this correction.
+    // PRIVON 0.3.1 Gate E5G.1C, corrected (Gate E5G.1G extends the identical reasoning to Edge):
+    // <paramref name="chromeReadinessOverride"/>/<paramref name="edgeReadinessOverride"/> exist ONLY
+    // for HandleChromeMutation/HandleEdgeMutation's own use -- every other caller (ShowRequested,
+    // every non-browser HandleMutation/HandleAddException path) omits both, so each browser's
+    // readiness continues to come from a fresh, independent Inspect read exactly as before.
     private void RenderCurrentState(
-        ISettingsSurface surface, string? statusMessage = null, NativeMessagingRegistrationReadiness? chromeReadinessOverride = null)
+        ISettingsSurface surface,
+        string? statusMessage = null,
+        NativeMessagingRegistrationReadiness? chromeReadinessOverride = null,
+        NativeMessagingRegistrationReadiness? edgeReadinessOverride = null)
     {
         var categories = _categoryService.Load();
         var exceptions = _exceptionService.List();
@@ -262,7 +287,8 @@ internal sealed class SettingsCoordinator : IDisposable
             Exceptions: exceptions,
             MasterKeyUnavailable: unavailable,
             StatusMessage: statusMessage,
-            ChromeNativeMessagingReadiness: chromeReadinessOverride ?? InspectChrome()));
+            ChromeNativeMessagingReadiness: chromeReadinessOverride ?? InspectChrome(),
+            EdgeNativeMessagingReadiness: edgeReadinessOverride ?? InspectEdge()));
     }
 
     // PRIVON 0.3.1 Gate E5G.1C -- CHROME_PROVISIONING: the verified Chrome identity is resolved
@@ -295,6 +321,35 @@ internal sealed class SettingsCoordinator : IDisposable
     private NativeMessagingRegistrationReadiness RepairChrome()
     {
         if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Chrome, out var identity))
+            return NativeMessagingRegistrationReadiness.Failed;
+
+        return _registrationCoordinator.Repair(identity.Browser, identity.NativeMessagingOrigin);
+    }
+
+    // PRIVON 0.3.1 Gate E5G.1G -- the exact Edge counterpart of InspectChrome/ProvisionChrome/
+    // RepairChrome: same identity catalog, same already-owned coordinator, same read-only/explicit-
+    // action discipline. Chrome and Edge are mechanically independent -- each call here supplies
+    // ONLY NativeMessagingBrowser.Edge, never Chrome, and vice versa, so neither browser's mutation
+    // can ever reach the other's registry leaf or manifest.
+    private NativeMessagingRegistrationReadiness InspectEdge()
+    {
+        if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Edge, out var identity))
+            return NativeMessagingRegistrationReadiness.Failed;
+
+        return _registrationCoordinator.Inspect(identity.Browser, identity.NativeMessagingOrigin);
+    }
+
+    private NativeMessagingRegistrationReadiness ProvisionEdge()
+    {
+        if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Edge, out var identity))
+            return NativeMessagingRegistrationReadiness.Failed;
+
+        return _registrationCoordinator.Provision(identity.Browser, identity.NativeMessagingOrigin);
+    }
+
+    private NativeMessagingRegistrationReadiness RepairEdge()
+    {
+        if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Edge, out var identity))
             return NativeMessagingRegistrationReadiness.Failed;
 
         return _registrationCoordinator.Repair(identity.Browser, identity.NativeMessagingOrigin);

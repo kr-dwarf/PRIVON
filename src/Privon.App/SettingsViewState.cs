@@ -19,4 +19,5 @@ internal sealed record SettingsViewState(
     IReadOnlyList<UserExceptionValue> Exceptions,
     bool MasterKeyUnavailable,
     string? StatusMessage,
-    NativeMessagingRegistrationReadiness ChromeNativeMessagingReadiness = NativeMessagingRegistrationReadiness.Failed);
+    NativeMessagingRegistrationReadiness ChromeNativeMessagingReadiness = NativeMessagingRegistrationReadiness.Failed,
+    NativeMessagingRegistrationReadiness EdgeNativeMessagingReadiness = NativeMessagingRegistrationReadiness.Failed);

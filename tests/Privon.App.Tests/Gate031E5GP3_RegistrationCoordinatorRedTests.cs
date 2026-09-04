@@ -499,17 +499,42 @@ public class Gate031E5GP3_RegistrationCoordinatorRedTests
     // 26/27 -- Chrome and Edge operations are mechanically independent; no cross-browser mutation.
     // ==================================================================
 
+    // AUDIT-CORRECTED (BrowserMutationClassifier): the previous oracle here --
+    // e.Contains("Edge"/"Chrome", StringComparison.Ordinal) -- can never detect a manifest-only
+    // mutation, since WriteManifest/DeleteManifest log only the lowercase chrome-host.json/
+    // edge-host.json PATH, never the capitalized word "Chrome"/"Edge". It was also never anchored to
+    // a proven-genuine mutation of the TARGET browser, so a future no-op Provision could have passed
+    // this test vacuously. Both cases now independently confirm the target starts Fresh, prove the
+    // actual Provision call produces a real, classifier-detected mutation of the target AND reaches
+    // Ready, then prove the opposite browser had ZERO mutation events across all four write
+    // primitives (PRIMARY evidence) with final leaf/manifest absence kept only as SECONDARY evidence.
     [Fact]
     public void Case26_ChromeProvision_NeverMutatesEdge()
     {
         var fake = new FakeNativeMessagingHostRegistrationEnvironment();
         var handle = BuildOrFail(fake, "case 26");
 
-        Harness.Provision(handle, AppBrowser.Chrome, ChromeExtensionOrigin);
+        // A freshly constructed fake has no leaf/manifest for either browser -- independently
+        // confirm Chrome starts Fresh before triggering the actual mutation.
+        Assert.Equal(CoordinatorReadiness.Fresh, Harness.Inspect(handle, AppBrowser.Chrome, ChromeExtensionOrigin));
 
+        var chromeResult = Harness.Provision(handle, AppBrowser.Chrome, ChromeExtensionOrigin);
+
+        // Prove Chrome Provision genuinely mutated Chrome -- never a vacuous no-op.
+        Assert.Equal(CoordinatorReadiness.Ready, chromeResult);
+        Assert.Contains(fake.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Chrome));
+
+        // PRIMARY: zero Edge mutation events, individually for each of the four write primitives,
+        // plus the combined restatement.
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsSetSubkeyDefaultValueFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsDeleteSubkeyFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsWriteManifestFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsDeleteManifestFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Edge));
+
+        // SECONDARY: final Edge state remains completely untouched.
         Assert.False(fake.LeafPresent(AppBrowser.Edge));
         Assert.False(fake.ManifestPresent(EdgeExpectedPath()));
-        Assert.DoesNotContain(fake.CallLog, e => e.Contains("Edge", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -518,11 +543,25 @@ public class Gate031E5GP3_RegistrationCoordinatorRedTests
         var fake = new FakeNativeMessagingHostRegistrationEnvironment();
         var handle = BuildOrFail(fake, "case 27");
 
-        Harness.Provision(handle, AppBrowser.Edge, EdgeExtensionOrigin);
+        Assert.Equal(CoordinatorReadiness.Fresh, Harness.Inspect(handle, AppBrowser.Edge, EdgeExtensionOrigin));
 
+        var edgeResult = Harness.Provision(handle, AppBrowser.Edge, EdgeExtensionOrigin);
+
+        // Prove Edge Provision genuinely mutated Edge -- never a vacuous no-op.
+        Assert.Equal(CoordinatorReadiness.Ready, edgeResult);
+        Assert.Contains(fake.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Edge));
+
+        // PRIMARY: zero Chrome mutation events, individually for each of the four write primitives,
+        // plus the combined restatement.
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsSetSubkeyDefaultValueFor(e, AppBrowser.Chrome));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsDeleteSubkeyFor(e, AppBrowser.Chrome));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsWriteManifestFor(e, AppBrowser.Chrome));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsDeleteManifestFor(e, AppBrowser.Chrome));
+        Assert.DoesNotContain(fake.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Chrome));
+
+        // SECONDARY: final Chrome state remains completely untouched.
         Assert.False(fake.LeafPresent(AppBrowser.Chrome));
         Assert.False(fake.ManifestPresent(ChromeExpectedPath()));
-        Assert.DoesNotContain(fake.CallLog, e => e.Contains("Chrome", StringComparison.Ordinal));
     }
 
     [Fact]

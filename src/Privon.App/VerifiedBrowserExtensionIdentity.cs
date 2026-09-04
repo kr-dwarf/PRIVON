@@ -23,19 +23,17 @@ internal readonly record struct VerifiedBrowserExtensionIdentity(NativeMessaging
 }
 
 /// <summary>
-/// PRIVON 0.3.1 Gate E5G.1C -- the ONE executable production authority for verified browser-store
-/// extension identity. The verified Chrome Web Store Item ID appears as a literal EXACTLY ONCE in
+/// PRIVON 0.3.1 Gates E5G.1C/E5G.1G -- the ONE executable production authority for verified
+/// browser-store extension identity. Each verified Store/CRX ID appears as a literal EXACTLY ONCE in
 /// this entire codebase: here. <see cref="TryGet"/> is the only production entry point -- a caller
 /// can never invent, guess, or supply an arbitrary Store ID; it can only ask whether a verified
 /// identity exists for a given <see cref="NativeMessagingBrowser"/>.
 ///
-/// CHROME_ONLY (this gate's own scope): Edge has no verified production identity yet --
-/// <see cref="TryGet"/> returns <see langword="false"/> for <see cref="NativeMessagingBrowser.Edge"/>
-/// and for any undefined <see cref="NativeMessagingBrowser"/> value. No fake/placeholder/wildcard
-/// Edge value exists anywhere in this type, and none may ever be added merely to make this catalog
-/// "complete" -- Edge identity enters this catalog only once a real Edge Store identity is itself
-/// verified, exactly mirroring how Chrome's own entry was added only after Chrome's real Item ID was
-/// verified.
+/// Edge's entry (Gate E5G.1G) was added only once a real Edge Add-ons Store CRX ID was itself
+/// verified -- exactly mirroring how Chrome's own entry (Gate E5G.1C) was added only after Chrome's
+/// real Item ID was verified. Any future undefined <see cref="NativeMessagingBrowser"/> value still
+/// gets no fake/placeholder/wildcard identity: <see cref="TryGet"/> returns <see langword="false"/>
+/// for it, exactly like every browser did before its own real identity was verified.
 /// </summary>
 internal static class VerifiedBrowserExtensionIdentities
 {
@@ -44,19 +42,30 @@ internal static class VerifiedBrowserExtensionIdentities
     // authoritative production copy; no other production source file may hold this literal.
     private const string ChromeStoreItemId = "aieobgphcpmkfnhadocdhenigmackboo";
 
-    /// <summary>True with the verified identity for <see cref="NativeMessagingBrowser.Chrome"/>;
-    /// <see langword="false"/> (with <paramref name="identity"/> left <see langword="default"/>) for
-    /// every other value, including <see cref="NativeMessagingBrowser.Edge"/> and any undefined
+    // Verified Microsoft Edge Add-ons Store CRX ID (Gate E5G.1G commander-supplied Partner Center
+    // evidence). Not a secret -- same reasoning as the Chrome literal above; this remains the single
+    // authoritative production copy.
+    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpjjn";
+
+    /// <summary>True with the verified identity for <see cref="NativeMessagingBrowser.Chrome"/> or
+    /// <see cref="NativeMessagingBrowser.Edge"/>; <see langword="false"/> (with
+    /// <paramref name="identity"/> left <see langword="default"/>) for any undefined
     /// <see cref="NativeMessagingBrowser"/>.</summary>
     internal static bool TryGet(NativeMessagingBrowser browser, out VerifiedBrowserExtensionIdentity identity)
     {
-        if (browser == NativeMessagingBrowser.Chrome)
+        switch (browser)
         {
-            identity = new VerifiedBrowserExtensionIdentity(NativeMessagingBrowser.Chrome, ChromeStoreItemId);
-            return true;
-        }
+            case NativeMessagingBrowser.Chrome:
+                identity = new VerifiedBrowserExtensionIdentity(NativeMessagingBrowser.Chrome, ChromeStoreItemId);
+                return true;
 
-        identity = default;
-        return false;
+            case NativeMessagingBrowser.Edge:
+                identity = new VerifiedBrowserExtensionIdentity(NativeMessagingBrowser.Edge, EdgeCrxId);
+                return true;
+
+            default:
+                identity = default;
+                return false;
+        }
     }
 }

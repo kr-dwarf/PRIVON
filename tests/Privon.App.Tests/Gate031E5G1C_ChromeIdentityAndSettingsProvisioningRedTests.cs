@@ -29,6 +29,13 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
     private const string ExpectedChromeOrigin = "chrome-extension://aieobgphcpmkfnhadocdhenigmackboo/";
     private const string DevMeasureId = "aippijooaannjccdplmnfpjbgjppkoaa";
 
+    // Gate E5G.1F audit remediation -- needed only for the Chrome-Repair-to-Edge-isolation
+    // companion test below; not a duplicate production identity source (the raw literal remains
+    // production-owned exclusively by VerifiedBrowserExtensionIdentity.cs -- see
+    // Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests.Case04 for that guarantee).
+    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpjjn";
+    private const string ExpectedEdgeOrigin = "chrome-extension://fmdcgbjednllpjlogkcjmlocpnpbpjjn/";
+
     // ==================================================================
     // IDENTITY CATALOG
     // ==================================================================
@@ -75,13 +82,12 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
         Assert.Contains("\"allowed_origins\":[\"" + ExpectedChromeOrigin + "\"]", json, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Case06_EdgeIdentity_IsAbsent()
-    {
-        bool found = VerifiedBrowserExtensionIdentities.TryGet(AppBrowser.Edge, out var identity);
-        Assert.False(found);
-        Assert.Equal(default, identity);
-    }
+    // Gate E5G.1F superseded this case's original scope: Edge is no longer absent from the identity
+    // catalog (a real, verified Edge CRX ID was added) -- see
+    // Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests.Case01_VerifiedEdgeIdentity_Exists_RawCrxId_IsExact_Ordinal
+    // for that coverage now. This case's own remaining scope -- Chrome itself is unaffected by
+    // Edge's addition -- is already independently covered by Case03_ChromeIdentity_RemainsUnchanged
+    // in that same Edge-gate file, so it is not duplicated here either.
 
     [Fact]
     public void Case07_UnknownBrowserIdentity_IsAbsent()
@@ -89,11 +95,15 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
         Assert.False(VerifiedBrowserExtensionIdentities.TryGet((AppBrowser)99, out _));
     }
 
+    // Gate E5G.1F superseded this case's original "only Chrome" scope -- the catalog now also
+    // contains Edge by design (see Gate031E5G1F's own Case08-equivalent-shaped coverage: Case01 for
+    // Edge presence, Case03 for Chrome being unaffected). This case still independently confirms
+    // Chrome itself resolves correctly after that addition.
     [Fact]
-    public void Case08_ProductionCatalog_ContainsOnlyChrome()
+    public void Case08_ChromeStillResolves_AfterEdgeIdentityWasAdded()
     {
-        Assert.True(VerifiedBrowserExtensionIdentities.TryGet(AppBrowser.Chrome, out _));
-        Assert.False(VerifiedBrowserExtensionIdentities.TryGet(AppBrowser.Edge, out _));
+        Assert.True(VerifiedBrowserExtensionIdentities.TryGet(AppBrowser.Chrome, out var identity));
+        Assert.Equal(ChromeStoreItemId, identity.StoreItemId, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -240,7 +250,13 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
         Assert.Equal(hostPath, doc.RootElement.GetProperty("path").GetString());
         Assert.Equal(ExpectedChromeOrigin, doc.RootElement.GetProperty("allowed_origins")[0].GetString());
 
-        Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => e.Contains("Edge", StringComparison.Ordinal));
+        // Settings now also displays Edge status alongside Chrome (Gate E5G.1F), so a read-only
+        // SubkeyExists(Edge)/ManifestExists(...) pair from that SAME render is expected here -- the
+        // real invariant is that Chrome's own Provision click never WRITE-mutates Edge. Audit-
+        // corrected (BrowserMutationClassifier): a case-sensitive "Edge" substring search can never
+        // match a manifest-only log entry (WriteManifest/DeleteManifest log only the lowercase
+        // edge-host.json PATH, never the word "Edge").
+        Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Edge));
         Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.ChromeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.ChromeNativeMessagingReadiness}");
     }
 
@@ -288,6 +304,77 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
 
         Assert.True(h.RegistrationEnvironment.ManifestPresent(expectedPath));
         Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.ChromeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.ChromeNativeMessagingReadiness}");
+    }
+
+    // Gate E5G.1F audit remediation -- the mirror of
+    // Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests.Case16_17_GenuineEdgeRepair_...:
+    // a GENUINELY mutating Chrome Repair (real OwnedNeedsRepair -> Ready, exactly Case24's own
+    // scenario above) leaves an independently-seeded, already-Ready Edge completely untouched --
+    // byte-identical registry value and manifest content, not merely "still Fresh" (which a no-op
+    // Repair could satisfy trivially with no real evidence). Case24 above already proves this Repair
+    // call is genuinely mutating (OwnedNeedsRepair -> Ready via real Uninstall+Install); this case
+    // adds only the Edge-isolation half.
+    [Fact]
+    public void Case24B_GenuineChromeRepair_OwnedNeedsRepairToReady_NeverMutatesEdge_EdgeByteIdentical()
+    {
+        var h = CreateHarness();
+        string chromeExpectedPath = ChromeExpectedPath();
+        string edgeExpectedPath = NativeMessagingHostRegistrationLayout.ExpectedManifestPath(AppBrowser.Edge);
+
+        // Seed Chrome into a REAL, registrar-recognized OwnedNeedsRepair -- the exact same fixture
+        // pattern Case24 already uses.
+        h.RegistrationEnvironment.SeedLeaf(AppBrowser.Chrome, chromeExpectedPath);
+
+        // Independently seed Edge into an already-Ready state with real, snapshot-able content --
+        // Ready (not merely Fresh) so a false adopt/overwrite leak would have actual bytes to disturb.
+        string edgeManifestJson = NativeMessagingHostRegistrationLayout.BuildManifestJson(
+            new NativeMessagingHostRegistrationSpec(@"D:\Evidence\PRIVON.exe", ExpectedEdgeOrigin));
+        h.RegistrationEnvironment.SeedLeaf(AppBrowser.Edge, edgeExpectedPath);
+        h.RegistrationEnvironment.SeedManifest(edgeExpectedPath, edgeManifestJson);
+
+        h.Coordinator.ShowRequested();
+        var surface = Assert.Single(h.CreatedSurfaces);
+
+        // 1. Independently confirm Chrome Inspect returns OwnedNeedsRepair.
+        Assert.Equal(NativeMessagingRegistrationReadiness.OwnedNeedsRepair, h.RegistrationCoordinator.Inspect(AppBrowser.Chrome, ExpectedChromeOrigin));
+        Assert.True(NativeMessagingRegistrationReadiness.OwnedNeedsRepair == surface.LastRenderedState!.ChromeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.OwnedNeedsRepair}, got {surface.LastRenderedState!.ChromeNativeMessagingReadiness}");
+
+        // 2/3. Edge's own known-Ready state, snapshotted before the Chrome action.
+        Assert.Equal(NativeMessagingRegistrationReadiness.Ready, h.RegistrationCoordinator.Inspect(AppBrowser.Edge, ExpectedEdgeOrigin));
+        string? edgeLeafBefore = h.RegistrationEnvironment.LeafValue(AppBrowser.Edge);
+        string? edgeManifestBefore = h.RegistrationEnvironment.ManifestContentAt(edgeExpectedPath);
+        int callsBeforeRepair = h.RegistrationEnvironment.CallLog.Count;
+
+        // 4. Trigger the actual Chrome Repair path through real Settings routing.
+        surface.RaiseChromeNativeMessagingRepairRequested();
+
+        var repairDelta = h.RegistrationEnvironment.CallLog.Skip(callsBeforeRepair).ToList();
+
+        // 5. Prove Chrome Repair genuinely mutated Chrome -- via BrowserMutationClassifier, which
+        // (unlike a "Chrome" substring search) correctly detects the manifest write too (WriteManifest
+        // logs only the lowercase chrome-host.json PATH, never the word "Chrome").
+        Assert.Contains(repairDelta, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Chrome));
+        Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.ChromeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.ChromeNativeMessagingReadiness}");
+        Assert.True(h.RegistrationEnvironment.ManifestPresent(chromeExpectedPath));
+
+        // 6. Prove Edge was untouched by that same Repair. PRIMARY proof (audit-corrected): zero
+        // mutation EVENTS for each of the four write primitives individually, via
+        // BrowserMutationClassifier -- NOT a case-sensitive "Edge" substring search, which can never
+        // match a manifest-only log entry and would therefore silently miss a real manifest-level
+        // cross-browser leak. Byte-identical final-state snapshot equality is kept only as SECONDARY
+        // evidence -- delete+rewrite-same-bytes or an unnecessary same-value mutation could leave
+        // final content unchanged while still violating browser independence, so final-state equality
+        // alone is never sufficient on its own.
+        Assert.DoesNotContain(repairDelta, e => BrowserMutationClassifier.IsSetSubkeyDefaultValueFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(repairDelta, e => BrowserMutationClassifier.IsDeleteSubkeyFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(repairDelta, e => BrowserMutationClassifier.IsWriteManifestFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(repairDelta, e => BrowserMutationClassifier.IsDeleteManifestFor(e, AppBrowser.Edge));
+        Assert.DoesNotContain(repairDelta, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Edge)); // combined restatement
+
+        // SECONDARY: final-state byte equivalence.
+        Assert.Equal(edgeLeafBefore, h.RegistrationEnvironment.LeafValue(AppBrowser.Edge), StringComparer.Ordinal);
+        Assert.Equal(edgeManifestBefore, h.RegistrationEnvironment.ManifestContentAt(edgeExpectedPath), StringComparer.Ordinal);
+        Assert.Equal(NativeMessagingRegistrationReadiness.Ready, h.RegistrationCoordinator.Inspect(AppBrowser.Edge, ExpectedEdgeOrigin));
     }
 
     [Fact]

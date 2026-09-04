@@ -108,21 +108,51 @@ public class Gate031E5C_NativeMessagingHostRegistrarRedTests
     // 1/2 -- FRESH INSTALL CREATES THE EXACT LEAF + MANIFEST FOR THAT BROWSER ONLY
     // ==================================================================
 
+    // AUDIT-CORRECTED (BrowserMutationClassifier, reused -- not duplicated): the previous oracle here
+    // -- e.Contains("(Edge)"/"(Chrome)", StringComparison.Ordinal) -- forbade ANY log entry merely
+    // containing that substring (even a harmless read), yet could never detect a manifest-only
+    // opposite-browser mutation in the first place, since WriteManifest/DeleteManifest log only the
+    // lowercase chrome-host.json/edge-host.json PATH, never the capitalized word "Chrome"/"Edge".
+    // Each case below now also explicitly classifier-proves the target browser's own genuine
+    // mutation (not left to final-state assertions alone), and the opposite-browser zero-mutation
+    // proof is PRIMARY (four individual write-primitive checks plus the combined restatement),
+    // NativeMessagingBrowser (unqualified) throughout this file resolves to THIS test project's own
+    // fixture-side enum (FakeHostRegistrationEnvironment.cs) -- BrowserMutationClassifier needs the
+    // REAL Privon.App.NativeMessagingBrowser instead, so it is always passed fully qualified below.
+    // Both enums are proven name-identical by construction (NativeMessagingHostRegistrarTestHarness.
+    // MapBrowser parses the real enum's ToString() into this local one), and
+    // NativeMessagingHostRegistrarTestHarness.ExpectedManifestPath is this gate's own commander-
+    // frozen INDEPENDENT re-derivation of the exact same formula
+    // NativeMessagingHostRegistrationLayout.ExpectedManifestPath uses in production (its own header:
+    // "if production computes a different path, the independence itself is what turns the suite
+    // RED") -- so passing the real enum to the classifier here is safe and correct.
     [Fact]
     public void Gate031E5C_1_ChromeFreshInstall_CreatesExactChromeLeafAndManifest_EdgeUntouched()
     {
         var fake = new FakeHostRegistrationEnvironment();
         var harness = BuildHarnessOrFail(fake, "Gate E5C case 1 (Chrome fresh install)");
         string expectedPath = NativeMessagingHostRegistrarTestHarness.ExpectedManifestPath(NativeMessagingBrowser.Chrome);
+        string edgeExpectedPath = NativeMessagingHostRegistrarTestHarness.ExpectedManifestPath(NativeMessagingBrowser.Edge);
 
         var actLog = InstallAndSnapshot(harness, fake, NativeMessagingBrowser.Chrome, ChromeSpec(harness));
 
+        // Prove Chrome Install genuinely mutated Chrome.
+        Assert.Contains(actLog, e => BrowserMutationClassifier.IsMutationFor(e, Privon.App.NativeMessagingBrowser.Chrome));
         Assert.True(fake.SubkeyExists(NativeMessagingBrowser.Chrome));
         Assert.Equal(expectedPath, fake.GetSubkeyDefaultValue(NativeMessagingBrowser.Chrome));
         Assert.True(fake.ManifestExists(expectedPath));
 
+        // PRIMARY: zero Edge mutation events, individually for each of the four write primitives,
+        // plus the combined restatement.
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsSetSubkeyDefaultValueFor(e, Privon.App.NativeMessagingBrowser.Edge));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsDeleteSubkeyFor(e, Privon.App.NativeMessagingBrowser.Edge));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsWriteManifestFor(e, Privon.App.NativeMessagingBrowser.Edge));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsDeleteManifestFor(e, Privon.App.NativeMessagingBrowser.Edge));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsMutationFor(e, Privon.App.NativeMessagingBrowser.Edge));
+
+        // SECONDARY: final Edge state remains completely untouched.
         Assert.False(fake.SubkeyExists(NativeMessagingBrowser.Edge));
-        Assert.DoesNotContain(actLog, e => e.Contains("(Edge)", StringComparison.Ordinal));
+        Assert.False(fake.ManifestExists(edgeExpectedPath));
     }
 
     [Fact]
@@ -131,15 +161,27 @@ public class Gate031E5C_NativeMessagingHostRegistrarRedTests
         var fake = new FakeHostRegistrationEnvironment();
         var harness = BuildHarnessOrFail(fake, "Gate E5C case 2 (Edge fresh install)");
         string expectedPath = NativeMessagingHostRegistrarTestHarness.ExpectedManifestPath(NativeMessagingBrowser.Edge);
+        string chromeExpectedPath = NativeMessagingHostRegistrarTestHarness.ExpectedManifestPath(NativeMessagingBrowser.Chrome);
 
         var actLog = InstallAndSnapshot(harness, fake, NativeMessagingBrowser.Edge, EdgeSpec(harness));
 
+        // Prove Edge Install genuinely mutated Edge.
+        Assert.Contains(actLog, e => BrowserMutationClassifier.IsMutationFor(e, Privon.App.NativeMessagingBrowser.Edge));
         Assert.True(fake.SubkeyExists(NativeMessagingBrowser.Edge));
         Assert.Equal(expectedPath, fake.GetSubkeyDefaultValue(NativeMessagingBrowser.Edge));
         Assert.True(fake.ManifestExists(expectedPath));
 
+        // PRIMARY: zero Chrome mutation events, individually for each of the four write primitives,
+        // plus the combined restatement.
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsSetSubkeyDefaultValueFor(e, Privon.App.NativeMessagingBrowser.Chrome));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsDeleteSubkeyFor(e, Privon.App.NativeMessagingBrowser.Chrome));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsWriteManifestFor(e, Privon.App.NativeMessagingBrowser.Chrome));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsDeleteManifestFor(e, Privon.App.NativeMessagingBrowser.Chrome));
+        Assert.DoesNotContain(actLog, e => BrowserMutationClassifier.IsMutationFor(e, Privon.App.NativeMessagingBrowser.Chrome));
+
+        // SECONDARY: final Chrome state remains completely untouched.
         Assert.False(fake.SubkeyExists(NativeMessagingBrowser.Chrome));
-        Assert.DoesNotContain(actLog, e => e.Contains("(Chrome)", StringComparison.Ordinal));
+        Assert.False(fake.ManifestExists(chromeExpectedPath));
     }
 
     // ==================================================================

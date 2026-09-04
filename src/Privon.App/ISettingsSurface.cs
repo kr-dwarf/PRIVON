@@ -62,6 +62,16 @@ internal interface ISettingsSurface
     /// opening Settings or by a Provision raise.</summary>
     event EventHandler? ChromeNativeMessagingRepairRequested;
 
+    /// <summary>PRIVON 0.3.1 Gate E5G.1G -- the Edge counterpart of
+    /// <see cref="ChromeNativeMessagingProvisionRequested"/>. Same contract, evaluated against
+    /// <see cref="SettingsViewState.EdgeNativeMessagingReadiness"/> instead -- Chrome and Edge are
+    /// mechanically independent actions.</summary>
+    event EventHandler? EdgeNativeMessagingProvisionRequested;
+
+    /// <summary>PRIVON 0.3.1 Gate E5G.1G -- the Edge counterpart of
+    /// <see cref="ChromeNativeMessagingRepairRequested"/>.</summary>
+    event EventHandler? EdgeNativeMessagingRepairRequested;
+
     /// <summary>Displays the surface for the first time in its current lifecycle (a fresh
     /// construction, per ONE_CURRENT_SETTINGS_WINDOW -- see <see cref="SettingsCoordinator"/>'s own
     /// doc). Unlike <see cref="IDecisionPromptSurface.Show"/>, this surface activates normally --

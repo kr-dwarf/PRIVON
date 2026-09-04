@@ -71,6 +71,13 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     private readonly System.Windows.Controls.Button _chromeSetupButton;
     private readonly System.Windows.Controls.Button _chromeRepairButton;
 
+    // PRIVON 0.3.1 Gate E5G.1G -- the exact Edge counterpart of the Chrome fields above; same
+    // RENDER_ONLY/mutually-exclusive-visible discipline, keyed off
+    // SettingsViewState.EdgeNativeMessagingReadiness instead.
+    private readonly TextBlock _edgeStatusText;
+    private readonly System.Windows.Controls.Button _edgeSetupButton;
+    private readonly System.Windows.Controls.Button _edgeRepairButton;
+
     // DEGRADED_STORAGE_STATUS_CORRECTION (PRIVON v0.2.1 Gate 3C audit correction): two
     // INDEPENDENT regions, never one shared field -- MasterKeyUnavailable (degraded-storage
     // explanation) and StatusMessage (transient action/mutation feedback) are two distinct facts
@@ -147,6 +154,13 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         _chromeRepairButton = new System.Windows.Controls.Button { Content = "Repair", Margin = new Thickness(16, 0, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         _chromeRepairButton.Click += (_, _) => ChromeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
 
+        var edgeHeader = new TextBlock { Text = "Edge Web/AI Protection Setup", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
+        _edgeStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 4) };
+        _edgeSetupButton = new System.Windows.Controls.Button { Content = "Set up", Margin = new Thickness(16, 0, 16, 4), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _edgeSetupButton.Click += (_, _) => EdgeNativeMessagingProvisionRequested?.Invoke(this, EventArgs.Empty);
+        _edgeRepairButton = new System.Windows.Controls.Button { Content = "Repair", Margin = new Thickness(16, 0, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _edgeRepairButton.Click += (_, _) => EdgeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
+
         var panel = new StackPanel();
         panel.Children.Add(_degradedBannerText);
         panel.Children.Add(_statusText);
@@ -164,6 +178,10 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         panel.Children.Add(_chromeStatusText);
         panel.Children.Add(_chromeSetupButton);
         panel.Children.Add(_chromeRepairButton);
+        panel.Children.Add(edgeHeader);
+        panel.Children.Add(_edgeStatusText);
+        panel.Children.Add(_edgeSetupButton);
+        panel.Children.Add(_edgeRepairButton);
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     }
 
@@ -181,6 +199,8 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     public event EventHandler? ResetExceptionsRequested;
     public event EventHandler? ChromeNativeMessagingProvisionRequested;
     public event EventHandler? ChromeNativeMessagingRepairRequested;
+    public event EventHandler? EdgeNativeMessagingProvisionRequested;
+    public event EventHandler? EdgeNativeMessagingRepairRequested;
 
     void ISettingsSurface.Show() => Show();
 
@@ -240,6 +260,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         _valueBox.Clear();
 
         RenderChromeSection(state.ChromeNativeMessagingReadiness);
+        RenderEdgeSection(state.EdgeNativeMessagingReadiness);
     }
 
     // PRIVON 0.3.1 Gate E5G.1C -- no registry path, manifest content, or other internal mechanics
@@ -262,6 +283,25 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         _chromeSetupButton.Visibility = readiness == NativeMessagingRegistrationReadiness.Fresh
             ? Visibility.Visible : Visibility.Collapsed;
         _chromeRepairButton.Visibility = readiness == NativeMessagingRegistrationReadiness.OwnedNeedsRepair
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // PRIVON 0.3.1 Gate E5G.1G -- the exact Edge counterpart of RenderChromeSection.
+    private void RenderEdgeSection(NativeMessagingRegistrationReadiness readiness)
+    {
+        _edgeStatusText.Text = readiness switch
+        {
+            NativeMessagingRegistrationReadiness.Fresh => "Edge: not set up",
+            NativeMessagingRegistrationReadiness.Ready => "Edge: ready",
+            NativeMessagingRegistrationReadiness.OwnedNeedsRepair => "Edge: needs repair",
+            NativeMessagingRegistrationReadiness.ForeignBlocked => "Edge: blocked (already used by another program)",
+            NativeMessagingRegistrationReadiness.OrphanBlocked => "Edge: blocked (conflicting file present)",
+            _ => "Edge: unavailable",
+        };
+
+        _edgeSetupButton.Visibility = readiness == NativeMessagingRegistrationReadiness.Fresh
+            ? Visibility.Visible : Visibility.Collapsed;
+        _edgeRepairButton.Visibility = readiness == NativeMessagingRegistrationReadiness.OwnedNeedsRepair
             ? Visibility.Visible : Visibility.Collapsed;
     }
 
