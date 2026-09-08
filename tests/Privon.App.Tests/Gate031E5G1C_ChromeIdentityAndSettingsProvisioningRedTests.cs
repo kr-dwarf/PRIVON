@@ -33,8 +33,8 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
     // companion test below; not a duplicate production identity source (the raw literal remains
     // production-owned exclusively by VerifiedBrowserExtensionIdentity.cs -- see
     // Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests.Case04 for that guarantee).
-    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpjjn";
-    private const string ExpectedEdgeOrigin = "chrome-extension://fmdcgbjednllpjlogkcjmlocpnpbpjjn/";
+    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpljn";
+    private const string ExpectedEdgeOrigin = "chrome-extension://fmdcgbjednllpjlogkcjmlocpnpbpljn/";
 
     // ==================================================================
     // IDENTITY CATALOG

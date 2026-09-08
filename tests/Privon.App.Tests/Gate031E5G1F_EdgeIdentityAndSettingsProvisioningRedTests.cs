@@ -24,8 +24,8 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
     }
 
     private const string ChromeStoreItemId = "aieobgphcpmkfnhadocdhenigmackboo";
-    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpjjn";
-    private const string ExpectedEdgeOrigin = "chrome-extension://fmdcgbjednllpjlogkcjmlocpnpbpjjn/";
+    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpljn";
+    private const string ExpectedEdgeOrigin = "chrome-extension://fmdcgbjednllpjlogkcjmlocpnpbpljn/";
 
     // ==================================================================
     // IDENTITY CATALOG

@@ -45,7 +45,7 @@ internal static class VerifiedBrowserExtensionIdentities
     // Verified Microsoft Edge Add-ons Store CRX ID (Gate E5G.1G commander-supplied Partner Center
     // evidence). Not a secret -- same reasoning as the Chrome literal above; this remains the single
     // authoritative production copy.
-    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpjjn";
+    private const string EdgeCrxId = "fmdcgbjednllpjlogkcjmlocpnpbpljn";
 
     /// <summary>True with the verified identity for <see cref="NativeMessagingBrowser.Chrome"/> or
     /// <see cref="NativeMessagingBrowser.Edge"/>; <see langword="false"/> (with
