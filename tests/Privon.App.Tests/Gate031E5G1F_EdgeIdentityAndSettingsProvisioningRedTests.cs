@@ -378,7 +378,10 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         Assert.Equal(NativeMessagingRegistrationReadiness.Ready, h.RegistrationCoordinator.Inspect(AppBrowser.Chrome, chromeOrigin));
     }
 
-    // Item 21: production Web authorization allowlist remains EMPTY after Edge provisioning succeeds.
+    // Item 21: production Web authorization allowlist is UNCHANGED by Edge provisioning -- Native
+    // Messaging registration/repair and Web-origin authorization are separate authorities (Gate
+    // E5G.3's own static, compile-time-fixed Production set never reacts to a registration outcome).
+    // In particular, a successful EDGE provision must never cause the Edge origin to appear.
     [Fact]
     public void Case21_SuccessfulEdgeProvision_DoesNotPopulateWebAuthorizationAllowlist()
     {
@@ -386,7 +389,9 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         Assert.Equal(
             NativeMessagingRegistrationReadiness.Ready,
             h.RegistrationCoordinator.Provision(AppBrowser.Edge, ExpectedEdgeOrigin));
-        Assert.Empty(WebExtensionOriginAllowlist.Production);
+        Assert.DoesNotContain(ExpectedEdgeOrigin, WebExtensionOriginAllowlist.Production);
+        Assert.Single(WebExtensionOriginAllowlist.Production);
+        Assert.Contains("chrome-extension://" + ChromeStoreItemId + "/", WebExtensionOriginAllowlist.Production);
     }
 
     // The release guard must refuse before even a configured throwing write can be reached.

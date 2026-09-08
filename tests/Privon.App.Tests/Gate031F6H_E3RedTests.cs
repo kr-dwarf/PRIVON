@@ -189,8 +189,14 @@ public class Gate031F6H_E3RedTests
         "(section 49: real browser cannot yet enter the production Host branch; E5 supplies real " +
         "extension origins). No environment/registry/DEBUG/config-file override of any kind.";
 
+    // Gate E5G.3's own explicit, stated GREEN target superseded this E3-era test's original EMPTY
+    // assertion: Production now authorizes exactly the verified Chrome Store origin (see
+    // Gate031E5G3_ChromeOnlyProductionAllowlistRedTests.A/B, GREEN). The invariant this test still
+    // exists to prove -- exactly the members this codebase's own security review can enumerate, never
+    // a silently-broadened or environment-driven set -- is now expressed as "exactly one, exactly the
+    // verified Chrome origin" instead of "none".
     [Fact]
-    public void Section49_ProductionAllowlist_IsEmpty()
+    public void Section49_ProductionAllowlist_IsExactlyTheVerifiedChromeOrigin()
     {
         Assert.True(AllowlistType is not null, AllowlistContract);
 
@@ -200,7 +206,9 @@ public class Gate031F6H_E3RedTests
         var value = property!.GetValue(null);
         Assert.True(value is not null, "Production must not be null.");
         var set = Assert.IsAssignableFrom<System.Collections.IEnumerable>(value);
-        Assert.Empty(set.Cast<object>());
+        var origins = set.Cast<object>().ToArray();
+        Assert.Single(origins);
+        Assert.Equal("chrome-extension://aieobgphcpmkfnhadocdhenigmackboo/", origins[0]);
     }
 
     // ==================================================================

@@ -65,20 +65,29 @@ public class Gate031E5F_ProductionCompositionRedTests
     }
 
     // ==================================================================
-    // 4/5 -- production extension-origin allowlist is EMPTY, keeping identity authorization
-    // fail-closed. (Allowlist itself is E5D/E3-frozen and re-asserted, unchanged, by
-    // Gate031F6K_E4RedTests.G18_ProductionExtensionAllowlist_RemainsEmpty -- not duplicated here.)
+    // 4/5 -- production extension-origin allowlist is UNCHANGED by composition startup. As of Gate
+    // E5G.3 it authorizes exactly the verified Chrome Store origin (no longer empty -- see
+    // Gate031E5G3_ChromeOnlyProductionAllowlistRedTests.A and
+    // Gate031F6K_E4RedTests.G18_ProductionExtensionAllowlist_IsExactlyTheVerifiedChromeOrigin_Gate031E5G3,
+    // both GREEN) -- but composition Start() must never itself mutate this static, compile-time-fixed
+    // set, so the exact content is re-asserted before and after Start() here rather than merely by
+    // omission.
     // ==================================================================
 
     [Fact]
-    public void Case4_5_ProductionAllowlist_RemainsEmpty_EvenAfterCompositionStarts()
+    public void Case4_5_ProductionAllowlist_IsUnchangedByCompositionStart()
     {
+        var beforeStart = WebExtensionOriginAllowlist.Production.ToArray();
+
         string storageRoot = CreateTempStorageRoot();
         using var composition = CreateRealComposition(storageRoot);
         composition.Start();
         try
         {
-            Assert.Empty(WebExtensionOriginAllowlist.Production);
+            Assert.Single(WebExtensionOriginAllowlist.Production);
+            Assert.Contains("chrome-extension://aieobgphcpmkfnhadocdhenigmackboo/", WebExtensionOriginAllowlist.Production);
+            Assert.DoesNotContain("chrome-extension://fmdcgbjednllpjlogkcjmlocpnpbpljn/", WebExtensionOriginAllowlist.Production);
+            Assert.Equal(beforeStart, WebExtensionOriginAllowlist.Production.ToArray());
         }
         finally
         {

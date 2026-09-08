@@ -129,11 +129,19 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
         Assert.DoesNotContain(DevMeasureId, source, StringComparison.Ordinal);
     }
 
+    // Gate E5G.3 superseded this test's original EMPTY assertion: Production now authorizes exactly
+    // the verified Chrome Store origin (a static, compile-time-fixed set -- see
+    // Gate031E5G3_ChromeOnlyProductionAllowlistRedTests.A, GREEN). The invariant this test still
+    // exists to prove -- that merely READING the identity catalog never itself mutates Production --
+    // is now expressed as "unchanged across the access" instead of "still empty".
     [Fact]
-    public void Case11_WebExtensionOriginAllowlist_RemainsEmpty_AfterIdentityCatalogAccess()
+    public void Case11_WebExtensionOriginAllowlist_IsUnchanged_AfterIdentityCatalogAccess()
     {
+        var before = WebExtensionOriginAllowlist.Production.ToArray();
         VerifiedBrowserExtensionIdentities.TryGet(AppBrowser.Chrome, out _);
-        Assert.Empty(WebExtensionOriginAllowlist.Production);
+        Assert.Equal(before, WebExtensionOriginAllowlist.Production.ToArray());
+        Assert.Single(WebExtensionOriginAllowlist.Production);
+        Assert.Contains(ExpectedChromeOrigin, WebExtensionOriginAllowlist.Production);
     }
 
     [Fact]
@@ -483,9 +491,14 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => e.StartsWith("DeleteManifest(", StringComparison.Ordinal));
     }
 
+    // Gate E5G.3 superseded this test's original EMPTY assertion (see Case11's own comment for the
+    // same reasoning): Settings-driven Chrome Native Messaging provisioning is a registry/manifest
+    // action, architecturally separate from Web-origin authorization -- a successful provision must
+    // never itself mutate the static, compile-time-fixed Production set.
     [Fact]
-    public void Case28_SuccessfulProvision_DoesNotPopulateWebAuthorizationAllowlist()
+    public void Case28_SuccessfulProvision_DoesNotMutateWebAuthorizationAllowlist()
     {
+        var before = WebExtensionOriginAllowlist.Production.ToArray();
         var h = CreateHarness();
         h.Coordinator.ShowRequested();
         var surface = Assert.Single(h.CreatedSurfaces);
@@ -493,7 +506,9 @@ public class Gate031E5G1C_ChromeIdentityAndSettingsProvisioningRedTests : IDispo
         surface.RaiseChromeNativeMessagingProvisionRequested();
 
         Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.ChromeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.ChromeNativeMessagingReadiness}");
-        Assert.Empty(WebExtensionOriginAllowlist.Production);
+        Assert.Equal(before, WebExtensionOriginAllowlist.Production.ToArray());
+        Assert.Single(WebExtensionOriginAllowlist.Production);
+        Assert.Contains(ExpectedChromeOrigin, WebExtensionOriginAllowlist.Production);
     }
 
     [Fact]

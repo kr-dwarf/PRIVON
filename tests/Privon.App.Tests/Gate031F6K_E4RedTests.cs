@@ -1438,9 +1438,15 @@ public class Gate031F6K_E4RedTests
     // ==================================================================
 
     [Fact]
-    public void G18_ProductionExtensionAllowlist_RemainsEmpty()
+    public void G18_ProductionExtensionAllowlist_IsExactlyTheVerifiedChromeOrigin_Gate031E5G3()
     {
-        Assert.Empty(WebExtensionOriginAllowlist.Production);
+        // Gate E5G.3 superseded this test's original EMPTY assertion with its own explicit, stated
+        // GREEN target: Production now authorizes exactly the verified Chrome Store origin (see
+        // Gate031E5G3_ChromeOnlyProductionAllowlistRedTests.A, GREEN). The Edge origin, and every other
+        // origin, remains absent -- re-asserted here rather than merely by omission.
+        Assert.Single(WebExtensionOriginAllowlist.Production);
+        Assert.Contains("chrome-extension://aieobgphcpmkfnhadocdhenigmackboo/", WebExtensionOriginAllowlist.Production);
+        Assert.DoesNotContain("chrome-extension://fmdcgbjednllpjlogkcjmlocpnpbpljn/", WebExtensionOriginAllowlist.Production);
     }
 
     [Fact]
@@ -1449,11 +1455,11 @@ public class Gate031F6K_E4RedTests
         // Gate E5F superseded this test's original assertion (composition wired NO concrete
         // WebClipboardAuthorizationSource) with its own opposite, explicitly-intended GREEN target:
         // composition now constructs exactly one production WebClipboardAuthorizationSource through
-        // normal composition (see Gate031E5F_ProductionCompositionRedTests.Case2_3, GREEN). Production
-        // stays fail-closed regardless -- G18_ProductionExtensionAllowlist_RemainsEmpty (above,
-        // unchanged) independently re-proves WebExtensionOriginAllowlist.Production is still empty, so
-        // no accepted Native Messaging session -- and therefore no authorization -- is reachable from
-        // source construction alone.
+        // normal composition (see Gate031E5F_ProductionCompositionRedTests.Case2_3, GREEN). As of Gate
+        // E5G.3, Production is no longer empty (G18_ProductionExtensionAllowlist_IsExactlyTheVerifiedChromeOrigin_Gate031E5G3,
+        // above) -- but no real com.privon.host is registered by composition alone (Gate031E5F case
+        // 7/8/9), so no live OS-level Native Messaging connection is reachable from source construction
+        // alone either way.
         string? path = TryFindAppSourceFile(nameof(PrivonAppComposition));
         Assert.True(path is not null, "src/Privon.App/PrivonAppComposition.cs must exist.");
         string source = File.ReadAllText(path!);
