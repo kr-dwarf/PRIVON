@@ -152,16 +152,25 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // tests) and non-null for every request that came in through a public guarded overload --
     // one queue, one item shape, no duplicated marshaling machinery (Phase 3A.5 STEP4
     // instruction's explicit "do not duplicate queues" guidance).
+    //
+    // AuthorizationFreshness (Gate 031F4): the EXACT verifier instance the public caller supplied
+    // (or null), carried unchanged from the enqueue call through to both CHECK1 and CHECK2 for
+    // THIS operation -- never replaced, cloned, or wrapped, and never read anywhere outside
+    // ExecuteRead/ReadWhileClipboardOpen. Always null for the internal, target-agnostic primitive.
     private readonly record struct PendingRead(
         TaskCompletionSource<ClipboardTextReadResult> Tcs,
-        ForegroundTargetSnapshot? ExpectedTarget);
+        ForegroundTargetSnapshot? ExpectedTarget,
+        IClipboardAuthorizationFreshness? AuthorizationFreshness);
 
     // Marshaled the same way as a pending read: caller enqueues under _gate, then posts a wakeup.
+    // AuthorizationFreshness: see PendingRead's own doc -- identical operation-scoped identity
+    // discipline, carried through to both WRITE CHECK1 and CHECK2 for this same write.
     private readonly record struct PendingWrite(
         TaskCompletionSource<ClipboardWriteResult> Tcs,
         ForegroundTargetSnapshot? ExpectedTarget,
         uint ExpectedSequence,
-        string ReplacementText);
+        string ReplacementText,
+        IClipboardAuthorizationFreshness? AuthorizationFreshness);
 
     /// <summary>
     /// CALLBACK_THREAD_CONTRACT (Phase 3A.4 STEP2.1): raised synchronously on the dedicated
@@ -252,13 +261,22 @@ public sealed class ClipboardChangeMonitor : IDisposable
     /// before anything is even enqueued: an unresolved snapshot, a zero PID, or a null/empty/
     /// whitespace process name is rejected as <see cref="ClipboardReadOutcome.InvalidExpectedTarget"/>
     /// with zero native calls of any kind.
+    ///
+    /// <paramref name="authorizationFreshness"/> (Gate 031F4, optional, trailing, default
+    /// <see langword="null"/>): when supplied, consulted -- in addition to, never instead of, the
+    /// unchanged <see cref="CheckForegroundTarget"/> re-verification -- at CHECK 1 (immediately
+    /// before <c>OpenClipboard</c>) and again at CHECK 2 (immediately before the actual clipboard
+    /// body is read). <see langword="null"/> (the default) reproduces exact pre-0.3.1 behavior --
+    /// no additional check of any kind. See <see cref="IClipboardAuthorizationFreshness"/>'s own
+    /// doc for the fail-closed exception contract.
     /// </summary>
-    public Task<ClipboardTextReadResult> ReadTextSnapshotAsync(ForegroundTargetSnapshot expectedTarget)
+    public Task<ClipboardTextReadResult> ReadTextSnapshotAsync(
+        ForegroundTargetSnapshot expectedTarget, IClipboardAuthorizationFreshness? authorizationFreshness = null)
     {
         if (!IsValidExpectedTarget(expectedTarget))
             return Task.FromResult(ClipboardTextReadResult.Failure(ClipboardReadOutcome.InvalidExpectedTarget));
 
-        return EnqueueRead(expectedTarget);
+        return EnqueueRead(expectedTarget, authorizationFreshness);
     }
 
     /// <summary>
@@ -282,9 +300,10 @@ public sealed class ClipboardChangeMonitor : IDisposable
     /// <c>InternalsVisibleTo</c>), which intentionally test clipboard read mechanics independent
     /// of target-guard concerns.
     /// </summary>
-    internal Task<ClipboardTextReadResult> ReadTextSnapshotAsync() => EnqueueRead(expectedTarget: null);
+    internal Task<ClipboardTextReadResult> ReadTextSnapshotAsync() => EnqueueRead(expectedTarget: null, authorizationFreshness: null);
 
-    private Task<ClipboardTextReadResult> EnqueueRead(ForegroundTargetSnapshot? expectedTarget)
+    private Task<ClipboardTextReadResult> EnqueueRead(
+        ForegroundTargetSnapshot? expectedTarget, IClipboardAuthorizationFreshness? authorizationFreshness)
     {
         var tcs = new TaskCompletionSource<ClipboardTextReadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -303,7 +322,7 @@ public sealed class ClipboardChangeMonitor : IDisposable
                 return tcs.Task;
             }
 
-            _pendingReads.Enqueue(new PendingRead(tcs, expectedTarget));
+            _pendingReads.Enqueue(new PendingRead(tcs, expectedTarget, authorizationFreshness));
         }
 
         // POSTMESSAGE_FAILURE_HANDLING (Phase 3A.4 STEP3.1): PostMessageW can itself fail. If it
@@ -337,16 +356,23 @@ public sealed class ClipboardChangeMonitor : IDisposable
     /// anything is even enqueued, exactly like <paramref name="expectedSequence"/> already is:
     /// an unresolved snapshot, a zero PID, or a null/empty/whitespace process name is rejected as
     /// <see cref="ClipboardWriteOutcome.InvalidExpectedTarget"/> with zero native calls.
+    ///
+    /// <paramref name="authorizationFreshness"/> (Gate 031F4, optional, trailing, default
+    /// <see langword="null"/>): see <see cref="ReadTextSnapshotAsync(ForegroundTargetSnapshot,IClipboardAuthorizationFreshness?)"/>'s
+    /// identical doc -- consulted at WRITE CHECK 1 (before the replacement HGLOBAL is even
+    /// prepared) and WRITE CHECK 2 (after the sequence CAS gate, before any rollback-slot
+    /// admission or clipboard mutation). <see langword="null"/> preserves exact pre-0.3.1 behavior.
     /// </summary>
     public Task<ClipboardWriteResult> WriteTextIfSequenceMatchesAsync(
-        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText)
+        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText,
+        IClipboardAuthorizationFreshness? authorizationFreshness = null)
     {
         ArgumentNullException.ThrowIfNull(replacementText);
 
         if (!IsValidExpectedTarget(expectedTarget))
             return Task.FromResult(ClipboardWriteResult.Failure(ClipboardWriteOutcome.InvalidExpectedTarget, mutated: false));
 
-        return ValidateAndEnqueueWrite(expectedTarget, expectedSequence, replacementText);
+        return ValidateAndEnqueueWrite(expectedTarget, expectedSequence, replacementText, authorizationFreshness);
     }
 
     /// <summary>
@@ -383,14 +409,15 @@ public sealed class ClipboardChangeMonitor : IDisposable
     internal Task<ClipboardWriteResult> WriteTextIfSequenceMatchesAsync(uint expectedSequence, string replacementText)
     {
         ArgumentNullException.ThrowIfNull(replacementText);
-        return ValidateAndEnqueueWrite(expectedTarget: null, expectedSequence, replacementText);
+        return ValidateAndEnqueueWrite(expectedTarget: null, expectedSequence, replacementText, authorizationFreshness: null);
     }
 
     // Shared TEXT_VALIDATION + enqueue body for both the guarded and internal write entry
     // points -- expectedTarget's own InvalidExpectedTarget validation already happened (or was
     // structurally skipped, for the internal null-target primitive) in each public caller above.
     private Task<ClipboardWriteResult> ValidateAndEnqueueWrite(
-        ForegroundTargetSnapshot? expectedTarget, uint expectedSequence, string replacementText)
+        ForegroundTargetSnapshot? expectedTarget, uint expectedSequence, string replacementText,
+        IClipboardAuthorizationFreshness? authorizationFreshness)
     {
         if (expectedSequence == 0)
             return Task.FromResult(ClipboardWriteResult.Failure(ClipboardWriteOutcome.InvalidExpectedSequence, mutated: false));
@@ -427,7 +454,7 @@ public sealed class ClipboardChangeMonitor : IDisposable
                 return tcs.Task;
             }
 
-            _pendingWrites.Enqueue(new PendingWrite(tcs, expectedTarget, expectedSequence, replacementText));
+            _pendingWrites.Enqueue(new PendingWrite(tcs, expectedTarget, expectedSequence, replacementText, authorizationFreshness));
         }
 
         // Same POSTMESSAGE_FAILURE_HANDLING discipline as ReadTextSnapshotAsync: if the wakeup
@@ -779,7 +806,7 @@ public sealed class ClipboardChangeMonitor : IDisposable
         while (_pendingReads.TryDequeue(out var pending))
         {
             if (pending.Tcs.Task.IsCompleted) continue;
-            pending.Tcs.TrySetResult(ExecuteRead(hwnd, pending.ExpectedTarget));
+            pending.Tcs.TrySetResult(ExecuteRead(hwnd, pending.ExpectedTarget, pending.AuthorizationFreshness));
             return;
         }
     }
@@ -792,7 +819,7 @@ public sealed class ClipboardChangeMonitor : IDisposable
         while (_pendingWrites.TryDequeue(out var pending))
         {
             if (pending.Tcs.Task.IsCompleted) continue;
-            pending.Tcs.TrySetResult(ExecuteWrite(hwnd, pending.ExpectedTarget, pending.ExpectedSequence, pending.ReplacementText));
+            pending.Tcs.TrySetResult(ExecuteWrite(hwnd, pending.ExpectedTarget, pending.ExpectedSequence, pending.ReplacementText, pending.AuthorizationFreshness));
             return;
         }
     }
@@ -805,21 +832,27 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // handle. No EmptyClipboard/SetClipboardData call exists anywhere in this method or this type.
     // expectedTarget is null only for the internal, target-agnostic primitive -- in that case
     // both CHECK 1 and CHECK 2 are structurally skipped, exactly reproducing pre-STEP4 behavior.
-    private ClipboardTextReadResult ExecuteRead(nint hwnd, ForegroundTargetSnapshot? expectedTarget)
+    private ClipboardTextReadResult ExecuteRead(
+        nint hwnd, ForegroundTargetSnapshot? expectedTarget, IClipboardAuthorizationFreshness? authorizationFreshness)
     {
-        // CHECK 1 (Phase 3A.5 STEP4): fresh foreground check BEFORE OpenClipboard is ever called
-        // -- an already-known-wrong target never even gets a clipboard session opened for it.
+        // CHECK 1 (Phase 3A.5 STEP4, extended by Gate 031F4): fresh foreground check BEFORE
+        // OpenClipboard is ever called -- an already-known-wrong target never even gets a
+        // clipboard session opened for it. The Gate 031F4 freshness check is additive, runs only
+        // once the existing foreground check has already matched, and never replaces it.
         if (expectedTarget is { } expected1)
         {
             var guardResult = CheckForegroundTarget(expected1);
             if (guardResult != ForegroundGuardResult.Matched)
                 return ClipboardTextReadResult.Failure(MapReadGuardOutcome(guardResult));
+
+            if (!IsAuthorizationStillCurrent(authorizationFreshness))
+                return ClipboardTextReadResult.Failure(ClipboardReadOutcome.TargetChanged);
         }
 
         if (!_textNative.OpenClipboard(hwnd, out int openError))
             return ClipboardTextReadResult.Failure(ClipboardReadOutcome.Busy, openError);
 
-        var result = ReadWhileClipboardOpen(hwnd, expectedTarget);
+        var result = ReadWhileClipboardOpen(hwnd, expectedTarget, authorizationFreshness);
 
         // FAILURE_PRECEDENCE (Phase 3A.4 STEP3.1): a CloseClipboard failure overrides whatever
         // ReadWhileClipboardOpen determined -- Success included. A caller must never be told the
@@ -839,24 +872,30 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // here, inside that same bracket, so the snapshot is self-consistent -- no other process can
     // successfully change the clipboard while it is open (Phase 3A.4 STEP1 report's
     // SNAPSHOT_SEMANTICS finding).
-    private ClipboardTextReadResult ReadWhileClipboardOpen(nint hwnd, ForegroundTargetSnapshot? expectedTarget)
+    private ClipboardTextReadResult ReadWhileClipboardOpen(
+        nint hwnd, ForegroundTargetSnapshot? expectedTarget, IClipboardAuthorizationFreshness? authorizationFreshness)
     {
         uint sequence = _native.GetClipboardSequenceNumber();
 
         if (!_native.IsUnicodeTextAvailable())
             return ClipboardTextReadResult.Failure(ClipboardReadOutcome.FormatUnavailable);
 
-        // CHECK 2 (Phase 3A.5 STEP4): a second fresh foreground check, positioned AFTER the
-        // sequence/format metadata capture (neither exposes content -- a number and a boolean)
-        // but IMMEDIATELY BEFORE TryReadUnicodeTextBody, which is the actual raw-content-copying
-        // step. If this fails, TryReadUnicodeTextBody/GetClipboardData are never called -- no raw
-        // clipboard content ever enters managed memory for a target that changed between CHECK 1
-        // and this point.
+        // CHECK 2 (Phase 3A.5 STEP4, extended by Gate 031F4): a second fresh foreground check,
+        // positioned AFTER the sequence/format metadata capture (neither exposes content -- a
+        // number and a boolean) but IMMEDIATELY BEFORE TryReadUnicodeTextBody, which is the
+        // actual raw-content-copying step. If this fails, TryReadUnicodeTextBody/GetClipboardData
+        // are never called -- no raw clipboard content ever enters managed memory for a target
+        // that changed between CHECK 1 and this point. The Gate 031F4 freshness check is
+        // additive, runs only once the existing foreground check has already matched, and never
+        // replaces it.
         if (expectedTarget is { } expected2)
         {
             var guardResult = CheckForegroundTarget(expected2);
             if (guardResult != ForegroundGuardResult.Matched)
                 return ClipboardTextReadResult.Failure(MapReadGuardOutcome(guardResult));
+
+            if (!IsAuthorizationStillCurrent(authorizationFreshness))
+                return ClipboardTextReadResult.Failure(ClipboardReadOutcome.TargetChanged);
         }
 
         if (!TryReadUnicodeTextBody(out string? text, out ClipboardReadOutcome failureOutcome, out int? win32Error))
@@ -956,7 +995,8 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // not merely before OpenClipboard: if the authorized target is already gone there is no
     // reason to allocate/copy replacement text into unmanaged memory at all.
     private ClipboardWriteResult ExecuteWrite(
-        nint hwnd, ForegroundTargetSnapshot? expectedTarget, uint expectedSequence, string replacementText)
+        nint hwnd, ForegroundTargetSnapshot? expectedTarget, uint expectedSequence, string replacementText,
+        IClipboardAuthorizationFreshness? authorizationFreshness)
     {
         // Phase 3C STEP41.2: a thin wrapper around the unchanged write logic (now ExecuteWriteCore)
         // -- adds exactly two diagnostic emissions (WriteStarted before, WriteCompleted after) and
@@ -966,7 +1006,7 @@ public sealed class ClipboardChangeMonitor : IDisposable
         RaiseWriteDiagnostic(new ClipboardWriteDiagnosticEvent(
             writeId, ClipboardWriteDiagnosticKind.WriteStarted, expectedSequence, null, null, null, null, null));
 
-        var result = ExecuteWriteCore(writeId, hwnd, expectedTarget, expectedSequence, replacementText);
+        var result = ExecuteWriteCore(writeId, hwnd, expectedTarget, expectedSequence, replacementText, authorizationFreshness);
 
         RaiseWriteDiagnostic(new ClipboardWriteDiagnosticEvent(
             writeId, ClipboardWriteDiagnosticKind.WriteCompleted, null, null, null, null, result.Outcome, result.ClipboardMutated));
@@ -979,14 +1019,22 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // each individual return statement. No control flow, branching, or native-call ordering below
     // differs from before this STEP.
     private ClipboardWriteResult ExecuteWriteCore(
-        long writeId, nint hwnd, ForegroundTargetSnapshot? expectedTarget, uint expectedSequence, string replacementText)
+        long writeId, nint hwnd, ForegroundTargetSnapshot? expectedTarget, uint expectedSequence, string replacementText,
+        IClipboardAuthorizationFreshness? authorizationFreshness)
     {
-        // CHECK 1 (Phase 3A.5 STEP4).
+        // CHECK 1 (Phase 3A.5 STEP4, extended by Gate 031F4). The Gate 031F4 freshness check sits
+        // in the SAME place as the existing foreground check -- BEFORE HGLOBAL preparation, not
+        // merely before OpenClipboard -- for the identical reason the original CHECK1 doc already
+        // gives: no reason to allocate/copy replacement text into unmanaged memory for an attempt
+        // that is already known to be stale.
         if (expectedTarget is { } expected1)
         {
             var guardResult = CheckForegroundTarget(expected1);
             if (guardResult != ForegroundGuardResult.Matched)
                 return ClipboardWriteResult.Failure(MapWriteGuardOutcome(guardResult), mutated: false);
+
+            if (!IsAuthorizationStillCurrent(authorizationFreshness))
+                return ClipboardWriteResult.Failure(ClipboardWriteOutcome.TargetChanged, mutated: false);
         }
 
         if (!TryPrepareReplacementHGlobal(replacementText, out nint hGlobal, out ClipboardWriteResult prepFailure))
@@ -1000,7 +1048,7 @@ public sealed class ClipboardChangeMonitor : IDisposable
             return ClipboardWriteResult.Failure(freeOutcome, mutated: false, freeErr);
         }
 
-        var (outcome, mutated, writeSequence, mutationError) = MutateWhileClipboardOpen(writeId, expectedSequence, expectedTarget, hGlobal);
+        var (outcome, mutated, writeSequence, mutationError) = MutateWhileClipboardOpen(writeId, expectedSequence, expectedTarget, hGlobal, authorizationFreshness);
 
         // FAILURE_PRECEDENCE (mirrors ExecuteRead/Phase 3A.4 STEP3.1): a CloseClipboard failure
         // overrides whatever the mutation body determined -- Success included -- but the already-
@@ -1324,7 +1372,8 @@ public sealed class ClipboardChangeMonitor : IDisposable
     // Marshal.Copy) before any explicit resolution ran. No return, no expected failure, and no
     // managed exception can leave the slot silently Reserved.
     private (ClipboardWriteOutcome Outcome, bool Mutated, uint WriteSequence, int? Win32Error) MutateWhileClipboardOpen(
-        long writeId, uint expectedSequence, ForegroundTargetSnapshot? expectedTarget, nint hGlobal)
+        long writeId, uint expectedSequence, ForegroundTargetSnapshot? expectedTarget, nint hGlobal,
+        IClipboardAuthorizationFreshness? authorizationFreshness)
     {
         uint currentSequence = _native.GetClipboardSequenceNumber();
 
@@ -1343,13 +1392,23 @@ public sealed class ClipboardChangeMonitor : IDisposable
             return (freeOutcome, false, 0, freeErr);
         }
 
-        // CHECK 2 (Phase 3A.5 STEP4): only reached after the sequence gate already matched.
+        // CHECK 2 (Phase 3A.5 STEP4, extended by Gate 031F4): only reached after the sequence gate
+        // already matched. The Gate 031F4 freshness check runs immediately after the existing
+        // foreground check succeeds and BEFORE any rollback-slot admission (TryAdmitWrite) or
+        // mutation of any kind -- if authorization has gone stale between CHECK1 and this point,
+        // no mutation may occur.
         if (expectedTarget is { } expected2)
         {
             var guardResult = CheckForegroundTarget(expected2);
             if (guardResult != ForegroundGuardResult.Matched)
             {
                 var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, MapWriteGuardOutcome(guardResult), null);
+                return (freeOutcome, false, 0, freeErr);
+            }
+
+            if (!IsAuthorizationStillCurrent(authorizationFreshness))
+            {
+                var (freeOutcome, freeErr) = FreeOwnedHGlobal(hGlobal, ClipboardWriteOutcome.TargetChanged, null);
                 return (freeOutcome, false, 0, freeErr);
             }
         }
@@ -1734,6 +1793,27 @@ public sealed class ClipboardChangeMonitor : IDisposable
         return ForegroundIdentityCapture.Matches(current, expected)
             ? ForegroundGuardResult.Matched
             : ForegroundGuardResult.Changed;
+    }
+
+    // Gate 031F4 -- the ONLY call site for IClipboardAuthorizationFreshness.IsStillCurrent().
+    // FAIL_CLOSED (frozen): null means "no additional check" (returns true, preserving exact
+    // pre-0.3.1 behavior); any exception the verifier itself throws is caught here and treated
+    // identically to a plain `false` -- it can never escape the clipboard owner thread and can
+    // never be mistaken for success. No verifier state, exception type, or exception message is
+    // logged anywhere in this type.
+    private static bool IsAuthorizationStillCurrent(IClipboardAuthorizationFreshness? authorizationFreshness)
+    {
+        if (authorizationFreshness is null)
+            return true;
+
+        try
+        {
+            return authorizationFreshness.IsStillCurrent();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static ClipboardReadOutcome MapReadGuardOutcome(ForegroundGuardResult result) => result switch

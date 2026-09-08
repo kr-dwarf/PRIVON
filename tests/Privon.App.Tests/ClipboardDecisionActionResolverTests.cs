@@ -1420,7 +1420,9 @@ public class ClipboardDecisionActionResolverTests
     {
         var fields = typeof(ClipboardDecisionActionResolver).GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
 
-        Assert.Equal(7, fields.Length);
+        // Gate 031F5C -- one field added: the optional-trailing IWebClipboardAuthorizationSource?
+        // dependency (see the Phase 3C STEP34 precedent asserted below for the same discipline).
+        Assert.Equal(8, fields.Length);
 
         var forbiddenTypeNames = new HashSet<string>
         {
@@ -1454,6 +1456,10 @@ public class ClipboardDecisionActionResolverTests
 
         // Phase 3C STEP34 -- the one new dependency this STEP is allowed to add.
         Assert.Contains(fields, f => f.FieldType == typeof(IClipboardComposerVerificationHandoff));
+
+        // Gate 031F5C -- the one new dependency THIS gate is allowed to add: the optional Web
+        // authorization source, matching the coordinator's own identical widening.
+        Assert.Contains(fields, f => f.FieldType == typeof(IWebClipboardAuthorizationSource));
     }
 
     [Theory]

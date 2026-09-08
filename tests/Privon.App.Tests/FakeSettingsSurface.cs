@@ -25,6 +25,10 @@ internal sealed class FakeSettingsSurface : ISettingsSurface
     public event EventHandler<AddExceptionRequest>? AddExceptionRequested;
     public event EventHandler<UserExceptionValue>? DeleteExceptionRequested;
     public event EventHandler? ResetExceptionsRequested;
+    public event EventHandler? ChromeNativeMessagingProvisionRequested;
+    public event EventHandler? ChromeNativeMessagingRepairRequested;
+    public event EventHandler? EdgeNativeMessagingProvisionRequested;
+    public event EventHandler? EdgeNativeMessagingRepairRequested;
 
     public void Show() => ShowCallCount++;
 
@@ -56,4 +60,12 @@ internal sealed class FakeSettingsSurface : ISettingsSurface
     public void RaiseDeleteExceptionRequested(UserExceptionValue value) => DeleteExceptionRequested?.Invoke(this, value);
 
     public void RaiseResetExceptionsRequested() => ResetExceptionsRequested?.Invoke(this, EventArgs.Empty);
+
+    public void RaiseChromeNativeMessagingProvisionRequested() => ChromeNativeMessagingProvisionRequested?.Invoke(this, EventArgs.Empty);
+
+    public void RaiseChromeNativeMessagingRepairRequested() => ChromeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
+
+    public void RaiseEdgeNativeMessagingProvisionRequested() => EdgeNativeMessagingProvisionRequested?.Invoke(this, EventArgs.Empty);
+
+    public void RaiseEdgeNativeMessagingRepairRequested() => EdgeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
 }

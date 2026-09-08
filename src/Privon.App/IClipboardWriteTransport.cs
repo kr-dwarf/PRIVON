@@ -17,7 +17,11 @@ namespace Privon.App;
 /// </summary>
 internal interface IClipboardWriteTransport
 {
-    /// <summary>See <see cref="ClipboardChangeMonitor.WriteTextIfSequenceMatchesAsync(ForegroundTargetSnapshot, uint, string)"/>.</summary>
+    /// <summary>See <see cref="ClipboardChangeMonitor.WriteTextIfSequenceMatchesAsync(ForegroundTargetSnapshot, uint, string, IClipboardAuthorizationFreshness?)"/>.
+    /// PRIVON 0.3.1 Gate 031F5C -- <paramref name="authorizationFreshness"/> is an optional
+    /// trailing pass-through, matching <see cref="IClipboardReadTransport.ReadTextSnapshotAsync"/>'s
+    /// own identical convention: <see langword="null"/> preserves exact pre-0.3.1 Windows behavior.</summary>
     Task<ClipboardWriteResult> WriteTextIfSequenceMatchesAsync(
-        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText);
+        ForegroundTargetSnapshot expectedTarget, uint expectedSequence, string replacementText,
+        IClipboardAuthorizationFreshness? authorizationFreshness = null);
 }

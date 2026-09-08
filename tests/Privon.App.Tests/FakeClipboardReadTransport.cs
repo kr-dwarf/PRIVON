@@ -16,6 +16,11 @@ internal sealed class FakeClipboardReadTransport : IClipboardReadTransport
     public List<string> CallLog { get; } = [];
     public List<ForegroundTargetSnapshot> ReceivedExpectedTargets { get; } = [];
 
+    /// <summary>Gate 031F5C -- the exact authorizationFreshness argument received on each call, in
+    /// order (null for a Windows/no-freshness call), so a test can prove which verifier instance a
+    /// guarded read actually received.</summary>
+    public List<IClipboardAuthorizationFreshness?> ReceivedAuthorizationFreshness { get; } = [];
+
     public bool StartCalled { get; private set; }
     public bool StopCalled { get; private set; }
     public bool ThrowOnStart { get; set; }
@@ -85,10 +90,12 @@ internal sealed class FakeClipboardReadTransport : IClipboardReadTransport
             throw new InvalidOperationException("Synthetic transport.Stop() failure for test.");
     }
 
-    public Task<ClipboardTextReadResult> ReadTextSnapshotAsync(ForegroundTargetSnapshot expectedTarget)
+    public Task<ClipboardTextReadResult> ReadTextSnapshotAsync(
+        ForegroundTargetSnapshot expectedTarget, IClipboardAuthorizationFreshness? authorizationFreshness = null)
     {
         CallLog.Add(nameof(ReadTextSnapshotAsync));
         ReceivedExpectedTargets.Add(expectedTarget);
+        ReceivedAuthorizationFreshness.Add(authorizationFreshness);
         // ORDERING_HAZARD: written LAST among the observable companion fields above, matching
         // FakeClipboardWriteTransport/FakeClipboardPrivacyProcessor's own identical discipline.
         ReadCallCount++;

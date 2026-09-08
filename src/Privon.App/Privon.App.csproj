@@ -7,9 +7,11 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <StartupObject>Privon.App.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Privon.Browser\Privon.Browser.csproj" />
     <ProjectReference Include="..\Privon.Core\Privon.Core.csproj" />
     <ProjectReference Include="..\Privon.Detection\Privon.Detection.csproj" />
     <ProjectReference Include="..\Privon.Storage\Privon.Storage.csproj" />

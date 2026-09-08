@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Gate E5B-PREP: dev-only Native Messaging launch-shape measurement host.
+
+    NOT registered in PRIVON.slnx, mirroring tools/ClipboardRaceMeasurement and tools/UiaInspector's
+    own existing "standalone, on-demand diagnostic tool" precedent: never built as part of the
+    counted regression baseline, never shipped, never referenced by src/ or the release packaging
+    script.
+
+    References ONLY Privon.Windows's existing PUBLIC surface (BrowserHostBindingResolver and its
+    public result types: BrowserHostBinding, BrowserHostBindingStatus, BrowserHostTopology,
+    PackageIdentityResolution, ExecutableSignatureResolution). No InternalsVisibleTo, no
+    Privon.App reference, no production source file anywhere in this repository is modified by this
+    project's existence. Deliberately does NOT reference Privon.App: E5B measures only mechanical
+    launch shape (argv, process topology, package identity, executable signature), never the
+    production pipe/Hello/HelloAck/StateAssert/WebChannelRegistry/ChallengeAsync surface, which
+    belongs to later gates.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Privon.WebLaunchMeasurement</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Privon.Windows\Privon.Windows.csproj" />
+  </ItemGroup>
+
+</Project>

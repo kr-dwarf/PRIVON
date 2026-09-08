@@ -25,6 +25,10 @@ internal interface IClipboardReadTransport
     void Start();
     void Stop();
 
-    /// <summary>See <see cref="ClipboardChangeMonitor.ReadTextSnapshotAsync(ForegroundTargetSnapshot)"/>.</summary>
-    Task<ClipboardTextReadResult> ReadTextSnapshotAsync(ForegroundTargetSnapshot expectedTarget);
+    /// <summary>See <see cref="ClipboardChangeMonitor.ReadTextSnapshotAsync(ForegroundTargetSnapshot,IClipboardAuthorizationFreshness?)"/>.
+    /// PRIVON 0.3.1 Gate 031F5C -- <paramref name="authorizationFreshness"/> is an optional
+    /// trailing pass-through: <see langword="null"/> (the default) reproduces exact pre-0.3.1
+    /// Windows behavior; a Web-authorized attempt supplies its own attempt-scoped bound verifier.</summary>
+    Task<ClipboardTextReadResult> ReadTextSnapshotAsync(
+        ForegroundTargetSnapshot expectedTarget, IClipboardAuthorizationFreshness? authorizationFreshness = null);
 }

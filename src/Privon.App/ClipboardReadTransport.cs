@@ -37,8 +37,9 @@ internal sealed class ClipboardReadTransport : IClipboardReadTransport, IDisposa
 
     public void Stop() => _monitor.Stop();
 
-    public Task<ClipboardTextReadResult> ReadTextSnapshotAsync(ForegroundTargetSnapshot expectedTarget) =>
-        _monitor.ReadTextSnapshotAsync(expectedTarget);
+    public Task<ClipboardTextReadResult> ReadTextSnapshotAsync(
+        ForegroundTargetSnapshot expectedTarget, IClipboardAuthorizationFreshness? authorizationFreshness = null) =>
+        _monitor.ReadTextSnapshotAsync(expectedTarget, authorizationFreshness);
 
     public void Dispose() => _monitor.Dispose();
 }

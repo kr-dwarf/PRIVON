@@ -23,6 +23,14 @@ public class SettingsCoordinatorTests : IDisposable
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 
+    // PRIVON 0.3.1 Gate E5G.1C -- SettingsCoordinator now also requires the already-owned
+    // NativeMessagingHostRegistrationCoordinator (see that type's own class doc). This suite's
+    // Phone/Email/exception scenarios never touch Chrome provisioning, so every harness below wires
+    // a fully in-memory, no-op instance (FakeNativeMessagingHostRegistrationEnvironment -- Gate
+    // E5G.P3's own fake, never real HKCU/filesystem access) purely to satisfy the constructor.
+    private static NativeMessagingHostRegistrationCoordinator CreateNoopRegistrationCoordinator() =>
+        new(new FakeNativeMessagingHostRegistrationEnvironment());
+
     private sealed class Harness
     {
         public required PrivonLocalStore Store { get; init; }
@@ -58,7 +66,8 @@ public class SettingsCoordinatorTests : IDisposable
                 var surface = new FakeSettingsSurface();
                 createdSurfaces.Add(surface);
                 return surface;
-            });
+            },
+            CreateNoopRegistrationCoordinator());
 
         return new Harness
         {
@@ -375,7 +384,8 @@ public class SettingsCoordinatorTests : IDisposable
             var coordinator = new SettingsCoordinator(
                 categoryService, exceptionService, DetectionPipeline.CreateDefault(),
                 () => store.IsMasterKeyUnavailable,
-                () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; });
+                () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; },
+                CreateNoopRegistrationCoordinator());
 
             coordinator.ShowRequested();
 
@@ -411,7 +421,8 @@ public class SettingsCoordinatorTests : IDisposable
             var coordinator = new SettingsCoordinator(
                 categoryService, exceptionService, DetectionPipeline.CreateDefault(),
                 () => store.IsMasterKeyUnavailable,
-                () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; });
+                () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; },
+                CreateNoopRegistrationCoordinator());
 
             coordinator.ShowRequested();
             var surface = Assert.Single(createdSurfaces);
@@ -447,7 +458,8 @@ public class SettingsCoordinatorTests : IDisposable
             var coordinator = new SettingsCoordinator(
                 categoryService, exceptionService, DetectionPipeline.CreateDefault(),
                 () => store.IsMasterKeyUnavailable,
-                () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; });
+                () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; },
+                CreateNoopRegistrationCoordinator());
 
             coordinator.ShowRequested();
             var surface = Assert.Single(createdSurfaces);
@@ -480,7 +492,8 @@ public class SettingsCoordinatorTests : IDisposable
         var coordinator = new SettingsCoordinator(
             categoryService, exceptionService, DetectionPipeline.CreateDefault(),
             () => store.IsMasterKeyUnavailable, // real, current value -- false, master key is fine
-            () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; });
+            () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; },
+            CreateNoopRegistrationCoordinator());
         coordinator.ShowRequested();
         var surface = Assert.Single(createdSurfaces);
 
@@ -511,7 +524,8 @@ public class SettingsCoordinatorTests : IDisposable
         var coordinator = new SettingsCoordinator(
             categoryService, exceptionService, DetectionPipeline.CreateDefault(),
             () => store.IsMasterKeyUnavailable,
-            () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; });
+            () => { var s = new FakeSettingsSurface(); createdSurfaces.Add(s); return s; },
+            CreateNoopRegistrationCoordinator());
         coordinator.ShowRequested();
         var surface = Assert.Single(createdSurfaces);
 
@@ -596,12 +610,14 @@ public class SettingsCoordinatorTests : IDisposable
         var pipeline = DetectionPipeline.CreateDefault();
         Func<bool> isUnavailable = () => false;
         Func<ISettingsSurface> factory = () => new FakeSettingsSurface();
+        var registrationCoordinator = CreateNoopRegistrationCoordinator();
 
-        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(null!, exceptionService, pipeline, isUnavailable, factory));
-        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, null!, pipeline, isUnavailable, factory));
-        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, exceptionService, null!, isUnavailable, factory));
-        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, exceptionService, pipeline, null!, factory));
-        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, exceptionService, pipeline, isUnavailable, null!));
+        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(null!, exceptionService, pipeline, isUnavailable, factory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, null!, pipeline, isUnavailable, factory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, exceptionService, null!, isUnavailable, factory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, exceptionService, pipeline, null!, factory, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, exceptionService, pipeline, isUnavailable, null!, registrationCoordinator));
+        Assert.Throws<ArgumentNullException>(() => new SettingsCoordinator(categoryService, exceptionService, pipeline, isUnavailable, factory, null!));
     }
 
     [Theory]
@@ -609,6 +625,8 @@ public class SettingsCoordinatorTests : IDisposable
     [InlineData(typeof(ISettingsSurface))]
     [InlineData(typeof(SettingsViewState))]
     [InlineData(typeof(AddExceptionRequest))]
+    [InlineData(typeof(VerifiedBrowserExtensionIdentities))]
+    [InlineData(typeof(VerifiedBrowserExtensionIdentity))]
     public void Types_AreNotPublic(Type type)
     {
         Assert.False(type.IsPublic);

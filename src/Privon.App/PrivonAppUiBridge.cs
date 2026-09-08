@@ -45,6 +45,21 @@ namespace Privon.App;
 /// wiring above). The tray's own <see cref="ITrayIconSurface.SettingsRequested"/> is routed through
 /// the SAME <see cref="IDispatcherScheduler"/> used for Exit/auto-start-toggle, for the identical
 /// uniform-non-blocking reason.
+///
+/// PRIVON 0.3.1 Gate E5G.P2/P3 -- this type now ALSO owns the ONE
+/// <see cref="NativeMessagingHostRegistrationCoordinator"/> (the store-independent Native Messaging
+/// registration coordinator), mirroring exactly how it already owns the ONE
+/// <see cref="WindowsAutoStartCoordinator"/>: supplied fully-constructed, never built internally
+/// (matching the auto-start precedent's own shape, since both wrap a narrow OS-mechanics seam this
+/// type itself never touches directly). REGISTRATION_STAYS_INERT (E5G.P2 commander contract, frozen,
+/// re-confirmed at Gate E5G.1C): neither this constructor nor <see cref="Start"/> nor
+/// <see cref="Dispose"/> ever calls <see cref="NativeMessagingHostRegistrationCoordinator.Inspect"/>/
+/// <c>Provision</c>/<c>Repair</c> -- provisioning stays unreachable from ordinary tray lifecycle. No
+/// tray button exists for it. Gate E5G.1C wires this SAME coordinator instance through, unchanged,
+/// to the ONE <see cref="SettingsCoordinator"/> this type also owns (see that type's own
+/// CHROME_PROVISIONING doc) -- the explicit Chrome Native Messaging setup/repair actions now live
+/// entirely behind Settings, never here and never a second independently-constructed coordinator
+/// instance.
 /// </summary>
 internal sealed class PrivonAppUiBridge : IDisposable
 {
@@ -53,6 +68,7 @@ internal sealed class PrivonAppUiBridge : IDisposable
     private readonly ITrayIconSurface _traySurface;
     private readonly IDispatcherScheduler _scheduler;
     private readonly WindowsAutoStartCoordinator _autoStartCoordinator;
+    private readonly NativeMessagingHostRegistrationCoordinator _registrationCoordinator;
     private readonly object _gate = new();
 
     private bool _started;
@@ -70,7 +86,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
         UserExceptionService userExceptionService,
         DetectionPipeline detectionPipeline,
         Func<bool> isMasterKeyUnavailable,
-        Func<ISettingsSurface> settingsSurfaceFactory)
+        Func<ISettingsSurface> settingsSurfaceFactory,
+        NativeMessagingHostRegistrationCoordinator registrationCoordinator)
     {
         ArgumentNullException.ThrowIfNull(sessionPublisher);
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -84,13 +101,16 @@ internal sealed class PrivonAppUiBridge : IDisposable
         ArgumentNullException.ThrowIfNull(detectionPipeline);
         ArgumentNullException.ThrowIfNull(isMasterKeyUnavailable);
         ArgumentNullException.ThrowIfNull(settingsSurfaceFactory);
+        ArgumentNullException.ThrowIfNull(registrationCoordinator);
 
         _scheduler = scheduler;
         _traySurface = traySurface;
         _autoStartCoordinator = autoStartCoordinator;
+        _registrationCoordinator = registrationCoordinator;
         _promptCoordinator = new DecisionPromptCoordinator(sessionPublisher, lifecycle, resolver, scheduler, promptSurfaceFactory);
         _settingsCoordinator = new SettingsCoordinator(
-            categorySettingsService, userExceptionService, detectionPipeline, isMasterKeyUnavailable, settingsSurfaceFactory);
+            categorySettingsService, userExceptionService, detectionPipeline, isMasterKeyUnavailable, settingsSurfaceFactory,
+            registrationCoordinator);
     }
 
     /// <summary>The only production construction path -- wires the real
@@ -127,7 +147,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
             userExceptionService,
             DetectionPipeline.CreateDefault(),
             () => composition.IsMasterKeyUnavailable,
-            () => new SettingsWindow());
+            () => new SettingsWindow(),
+            new NativeMessagingHostRegistrationCoordinator(new WindowsNativeMessagingHostRegistrationEnvironment()));
     }
 
     /// <summary>Single-use. Subscribes the decision-prompt coordinator, wires the tray's Exit
