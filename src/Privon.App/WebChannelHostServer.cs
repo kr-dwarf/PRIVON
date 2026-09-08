@@ -79,9 +79,11 @@ internal sealed class WebChannelHostServer
             if (status != BrowserHostBindingStatus.Resolved || binding is null)
                 return Task.CompletedTask; // R37
 
-            if (!WebBrowserGate.IsSupported(
+            if (!WebBrowserGate.TryIdentifySupportedBrowser(
                     binding.BrowserProcessName, binding.BrowserPackageIdentity,
-                    binding.BrowserExecutableSignature, binding.BrowserSignerOrganization))
+                    binding.BrowserExecutableSignature, binding.BrowserSignerOrganization,
+                    out var browser)
+                || !ReleaseBrowserSupportPolicy.IsSupported(browser))
                 return Task.CompletedTask; // R38/R9 -- no Hello ever consumed.
 
             var session = new WebChannelSession(clientStream, binding, _registry, lease, _manager);

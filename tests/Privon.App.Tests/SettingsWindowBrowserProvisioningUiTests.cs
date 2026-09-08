@@ -79,7 +79,7 @@ public class SettingsWindowBrowserProvisioningUiTests
         EdgeNativeMessagingReadiness: edgeReadiness);
 
     [Fact]
-    public void EdgeFresh_ShowsNotSetUp_SetupVisible_RepairNotVisible()
+    public void EdgeFresh_ShowsReleaseDeferred_NoSetup_NoRepair()
     {
         using var host = new DispatcherAffineTestHost();
 
@@ -96,13 +96,13 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: not set up", statusText);
-        Assert.Equal(Visibility.Visible, setupVisibility);
+        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
+        Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
 
     [Fact]
-    public void EdgeReady_ShowsReady_SetupNotVisible_RepairNotVisible()
+    public void EdgeReadyUnderlyingState_StillShowsReleaseDeferred_NoSetup_NoRepair()
     {
         using var host = new DispatcherAffineTestHost();
 
@@ -119,13 +119,13 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: ready", statusText);
+        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
 
     [Fact]
-    public void EdgeOwnedNeedsRepair_ShowsRepairRequired_SetupNotVisible_RepairVisible()
+    public void EdgeOwnedNeedsRepairUnderlyingState_StillShowsReleaseDeferred_NoSetup_NoRepair()
     {
         using var host = new DispatcherAffineTestHost();
 
@@ -142,9 +142,9 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: needs repair", statusText);
+        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
-        Assert.Equal(Visibility.Visible, repairVisibility);
+        Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: blocked (already used by another program)", statusText);
+        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
@@ -188,7 +188,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: blocked (conflicting file present)", statusText);
+        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
@@ -214,7 +214,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: unavailable", statusText);
+        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }

@@ -6,8 +6,8 @@ using AppBrowser = Privon.App.NativeMessagingBrowser;
 
 namespace Privon.App.Tests;
 
-// PRIVON 0.3.1 -- verified Edge browser-store identity integration + explicit Settings Edge
-// provisioning, extending Gate E5G.1C's Chrome-only identity catalog and Settings wiring. Chrome
+// PRIVON 0.3.1 -- verified Edge browser-store identity integration plus dormant registration
+// coverage. Settings now defers Edge for the Chrome-only 0.3.1 release scope while Chrome
 // identity/behavior is asserted UNCHANGED throughout. Identity-catalog cases use the real production
 // catalog directly; Settings-wiring cases use a real SettingsCoordinator against a real temp
 // PrivonLocalStore with a hand-written FakeNativeMessagingHostRegistrationEnvironment -- no real
@@ -146,15 +146,22 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
     // item 19/20: generated manifest contains exactly one allowed origin, the exact Edge origin,
     // never a Chrome origin.
     [Fact]
-    public void Case06_18_19_20_Fresh_ExplicitProvision_RoutesEdgeOnly_ManifestContainsExactlyEdgeOrigin()
+    public void Case06_18_19_20_DeferredSettingsProvision_PerformsNoMutation_DormantCoordinatorStillBuildsExactEdgeManifest()
     {
         const string hostPath = @"D:\Evidence\PRIVON.exe";
         var h = CreateHarness(hostPath);
         h.Coordinator.ShowRequested();
         var surface = Assert.Single(h.CreatedSurfaces);
-        Assert.True(NativeMessagingRegistrationReadiness.Fresh == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Fresh}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
 
         surface.RaiseEdgeNativeMessagingProvisionRequested();
+
+        Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Edge));
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
+
+        Assert.Equal(
+            NativeMessagingRegistrationReadiness.Ready,
+            h.RegistrationCoordinator.Provision(AppBrowser.Edge, ExpectedEdgeOrigin));
 
         string manifest = h.RegistrationEnvironment.ManifestContentAt(EdgeExpectedPath())!;
         using var doc = JsonDocument.Parse(manifest);
@@ -168,7 +175,7 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         // never match a manifest-only log entry (WriteManifest/DeleteManifest log only the lowercase
         // chrome-host.json PATH, never the word "Chrome").
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Chrome));
-        Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
     }
 
     // Item 7: Ready causes zero mutation on a second Provision click.
@@ -178,16 +185,17 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         var h = CreateHarness();
         h.Coordinator.ShowRequested();
         var surface = Assert.Single(h.CreatedSurfaces);
-        surface.RaiseEdgeNativeMessagingProvisionRequested(); // Fresh -> Ready
+        Assert.Equal(NativeMessagingRegistrationReadiness.Ready,
+            h.RegistrationCoordinator.Provision(AppBrowser.Edge, ExpectedEdgeOrigin));
         int callsSoFar = h.RegistrationEnvironment.CallLog.Count;
 
         surface.RaiseEdgeNativeMessagingProvisionRequested(); // already Ready
 
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog.Skip(callsSoFar), IsWriteCall);
-        Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
     }
 
-    // Item 8: OwnedNeedsRepair exposes explicit Repair (and Provision must NOT silently repair it).
+    // Item 8: deferred Settings actions must not provision or repair even an owned Edge registration.
     [Fact]
     public void Case08_OwnedNeedsRepair_ExplicitRepair_RoutesRepairAndReachesReady_ProvisionDoesNotSilentlyRepair()
     {
@@ -196,15 +204,15 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         h.RegistrationEnvironment.SeedLeaf(AppBrowser.Edge, expectedPath); // OwnedNeedsRepair, manifest absent
         h.Coordinator.ShowRequested();
         var surface = Assert.Single(h.CreatedSurfaces);
-        Assert.True(NativeMessagingRegistrationReadiness.OwnedNeedsRepair == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.OwnedNeedsRepair}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
 
         surface.RaiseEdgeNativeMessagingProvisionRequested();
         Assert.False(h.RegistrationEnvironment.ManifestPresent(expectedPath));
-        Assert.True(NativeMessagingRegistrationReadiness.OwnedNeedsRepair == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.OwnedNeedsRepair}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
 
         surface.RaiseEdgeNativeMessagingRepairRequested();
-        Assert.True(h.RegistrationEnvironment.ManifestPresent(expectedPath));
-        Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.False(h.RegistrationEnvironment.ManifestPresent(expectedPath));
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
     }
 
     // Item 9: ForeignBlocked causes zero mutation.
@@ -215,13 +223,13 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         h.RegistrationEnvironment.SeedLeaf(AppBrowser.Edge, @"C:\SomeOtherVendor\different-host.json");
         h.Coordinator.ShowRequested();
         var surface = Assert.Single(h.CreatedSurfaces);
-        Assert.True(NativeMessagingRegistrationReadiness.ForeignBlocked == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.ForeignBlocked}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
 
         surface.RaiseEdgeNativeMessagingProvisionRequested();
         surface.RaiseEdgeNativeMessagingRepairRequested();
 
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, IsWriteCall);
-        Assert.True(NativeMessagingRegistrationReadiness.ForeignBlocked == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.ForeignBlocked}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
     }
 
     // Item 10: OrphanBlocked causes zero mutation.
@@ -233,18 +241,18 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         h.RegistrationEnvironment.SeedManifest(expectedPath, "{}"); // file present, no registry witness
         h.Coordinator.ShowRequested();
         var surface = Assert.Single(h.CreatedSurfaces);
-        Assert.True(NativeMessagingRegistrationReadiness.OrphanBlocked == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.OrphanBlocked}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
 
         surface.RaiseEdgeNativeMessagingProvisionRequested();
         surface.RaiseEdgeNativeMessagingRepairRequested();
 
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, IsWriteCall);
-        Assert.True(NativeMessagingRegistrationReadiness.OrphanBlocked == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.OrphanBlocked}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
     }
 
     // Item 11: opening Settings causes zero Edge registration mutation.
     [Fact]
-    public void Case11_OpeningSettings_IsReadOnly_NoWriteCallsAndFreshEdgeReadinessRendered()
+    public void Case11_OpeningSettings_IsReadOnly_NoWriteCallsAndDeferredEdgeReadinessRendered()
     {
         var h = CreateHarness();
 
@@ -252,7 +260,7 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
 
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, IsWriteCall);
         var surface = Assert.Single(h.CreatedSurfaces);
-        Assert.True(NativeMessagingRegistrationReadiness.Fresh == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Fresh}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
     }
 
     // Item 12: Inspect (the read-only call Settings uses) causes zero mutation, independent of open.
@@ -267,10 +275,10 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, IsWriteCall);
     }
 
-    // Item 15: provisioning Edge (a genuine Fresh -> Ready mutation) never mutates Chrome, and Chrome
-    // remains independently Fresh (still snapshot-able as completely absent) throughout.
+    // Item 15: a deferred Settings Edge command mutates neither browser, and Chrome remains
+    // independently Fresh throughout.
     [Fact]
-    public void Case15_ProvisioningEdge_GenuinelyMutatesEdge_NeverMutatesChrome()
+    public void Case15_DeferredSettingsEdgeProvision_MutatesNeitherEdgeNorChrome()
     {
         var h = CreateHarness();
         string chromeOrigin = "chrome-extension://" + ChromeStoreItemId + "/";
@@ -278,9 +286,12 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         var surface = Assert.Single(h.CreatedSurfaces);
         Assert.Equal(NativeMessagingRegistrationReadiness.Fresh, h.RegistrationCoordinator.Inspect(AppBrowser.Chrome, chromeOrigin));
 
-        surface.RaiseEdgeNativeMessagingProvisionRequested(); // genuine Fresh -> Ready mutation
+        int callsBefore = h.RegistrationEnvironment.CallLog.Count;
+        surface.RaiseEdgeNativeMessagingProvisionRequested();
+        var actionDelta = h.RegistrationEnvironment.CallLog.Skip(callsBefore).ToList();
 
-        Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
+        Assert.DoesNotContain(actionDelta, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Edge));
         // Audit-corrected (BrowserMutationClassifier): see Case16_17's own doc for why a "Chrome"
         // substring search cannot detect a manifest-only mutation.
         Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Chrome));
@@ -297,10 +308,10 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
     // (having just been Provisioned), so Repair's own OwnedNeedsRepair-only guard made that call a
     // pure read-only no-op -- independently reproduced and confirmed: its own CallLog delta held
     // exactly 6 entries, none of them SetSubkeyDefaultValue/WriteManifest/DeleteSubkey/DeleteManifest.
-    // That proved nothing about cross-browser mutation isolation. This version forces Edge through
-    // the real OwnedNeedsRepair -> Ready mutation path before asserting Chrome isolation.
+    // That proved nothing about cross-browser mutation isolation. The dormant coordinator is invoked
+    // directly here to retain real OwnedNeedsRepair -> Ready coverage while Settings stays deferred.
     [Fact]
-    public void Case16_17_GenuineEdgeRepair_OwnedNeedsRepairToReady_NeverMutatesChrome_ChromeByteIdentical()
+    public void Case16_17_DormantCoordinatorEdgeRepair_OwnedNeedsRepairToReady_NeverMutatesChrome_ChromeByteIdentical()
     {
         var h = CreateHarness();
         string edgeExpectedPath = EdgeExpectedPath();
@@ -324,7 +335,7 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
 
         // 1. Independently confirm Edge Inspect returns OwnedNeedsRepair.
         Assert.Equal(NativeMessagingRegistrationReadiness.OwnedNeedsRepair, h.RegistrationCoordinator.Inspect(AppBrowser.Edge, ExpectedEdgeOrigin));
-        Assert.True(NativeMessagingRegistrationReadiness.OwnedNeedsRepair == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.OwnedNeedsRepair}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
 
         // 2/3. Chrome's own known-Ready state, snapshotted before the Edge action.
         Assert.Equal(NativeMessagingRegistrationReadiness.Ready, h.RegistrationCoordinator.Inspect(AppBrowser.Chrome, chromeOrigin));
@@ -332,8 +343,10 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         string? chromeManifestBefore = h.RegistrationEnvironment.ManifestContentAt(chromeExpectedPath);
         int callsBeforeRepair = h.RegistrationEnvironment.CallLog.Count;
 
-        // 4. Trigger the actual Edge Repair path through real Settings routing.
-        surface.RaiseEdgeNativeMessagingRepairRequested();
+        // 4. Exercise the dormant lower-level Edge Repair path directly. Settings is release-gated.
+        Assert.Equal(
+            NativeMessagingRegistrationReadiness.Ready,
+            h.RegistrationCoordinator.Repair(AppBrowser.Edge, ExpectedEdgeOrigin));
 
         var repairDelta = h.RegistrationEnvironment.CallLog.Skip(callsBeforeRepair).ToList();
 
@@ -341,7 +354,7 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         // a "Edge" substring search) correctly detects the manifest write too (WriteManifest logs
         // only the lowercase edge-host.json PATH, never the word "Edge").
         Assert.Contains(repairDelta, e => BrowserMutationClassifier.IsMutationFor(e, AppBrowser.Edge));
-        Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(NativeMessagingRegistrationReadiness.Failed, surface.LastRenderedState!.EdgeNativeMessagingReadiness);
         Assert.True(h.RegistrationEnvironment.ManifestPresent(edgeExpectedPath));
 
         // 6. Prove Chrome was untouched by that same Repair. PRIMARY proof (audit-corrected): zero
@@ -370,21 +383,15 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
     public void Case21_SuccessfulEdgeProvision_DoesNotPopulateWebAuthorizationAllowlist()
     {
         var h = CreateHarness();
-        h.Coordinator.ShowRequested();
-        var surface = Assert.Single(h.CreatedSurfaces);
-
-        surface.RaiseEdgeNativeMessagingProvisionRequested();
-
-        Assert.True(NativeMessagingRegistrationReadiness.Ready == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Ready}, got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.Equal(
+            NativeMessagingRegistrationReadiness.Ready,
+            h.RegistrationCoordinator.Provision(AppBrowser.Edge, ExpectedEdgeOrigin));
         Assert.Empty(WebExtensionOriginAllowlist.Production);
     }
 
-    // Failed action must surface Failed (mirrors the E5G.1C commander correction, extended to Edge):
-    // throwing on the FIRST write leaves zero trace, so an independent Inspect() afterward would
-    // legitimately -- but misleadingly -- report Fresh again; the coordinator's own Provision()
-    // outcome must be what is shown instead.
+    // The release guard must refuse before even a configured throwing write can be reached.
     [Fact]
-    public void CaseExtra_EdgeProvision_CoordinatorReturnsFailed_SurfacedAsFailed_NeverReadyOrSilentlyFresh()
+    public void CaseExtra_DeferredEdgeProvision_DoesNotReachThrowingMutation_AndRendersUnavailable()
     {
         var h = CreateHarness();
         h.RegistrationEnvironment.ThrowOnSetSubkeyDefaultValue = new InvalidOperationException("synthetic");
@@ -394,6 +401,7 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         surface.RaiseEdgeNativeMessagingProvisionRequested();
 
         Assert.True(NativeMessagingRegistrationReadiness.Failed == surface.LastRenderedState!.EdgeNativeMessagingReadiness, $"expected {NativeMessagingRegistrationReadiness.Failed} (the action's own outcome), got {surface.LastRenderedState!.EdgeNativeMessagingReadiness}");
+        Assert.DoesNotContain(h.RegistrationEnvironment.CallLog, IsWriteCall);
         Assert.Equal(NativeMessagingRegistrationReadiness.Fresh, h.RegistrationCoordinator.Inspect(AppBrowser.Edge, ExpectedEdgeOrigin));
     }
 
@@ -427,6 +435,22 @@ public class Gate031E5G1F_EdgeIdentityAndSettingsProvisioningRedTests : IDisposa
         string manifestPath = FindExtensionManifestFile();
         using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
         Assert.False(manifest.RootElement.TryGetProperty("key", out _));
+    }
+
+    [Fact]
+    public void E5G2_DeferredEdge_SetupAndRepairEvents_PerformZeroRegistrationMutation()
+    {
+        var h = CreateHarness();
+        h.Coordinator.ShowRequested();
+        var surface = Assert.Single(h.CreatedSurfaces);
+        h.RegistrationEnvironment.CallLog.Clear();
+
+        surface.RaiseEdgeNativeMessagingProvisionRequested();
+        surface.RaiseEdgeNativeMessagingRepairRequested();
+
+        Assert.DoesNotContain(
+            h.RegistrationEnvironment.CallLog,
+            entry => BrowserMutationClassifier.IsMutationFor(entry, AppBrowser.Edge));
     }
 
     // ==================================================================

@@ -28,9 +28,34 @@ internal static class WebBrowserGate
         string? processName,
         PackageIdentityResolution packageIdentity,
         ExecutableSignatureResolution executableSignature,
-        string? signerOrganization) =>
-        IsSupportedChrome(processName, packageIdentity, executableSignature, signerOrganization)
-        || IsSupportedEdge(processName, packageIdentity, executableSignature, signerOrganization);
+        string? signerOrganization) => TryIdentifySupportedBrowser(
+            processName, packageIdentity, executableSignature, signerOrganization, out _);
+
+    /// <summary>Resolves already-authenticated browser facts to the exact browser axis while keeping
+    /// all process/publisher literals in this one identity-policy owner. Release support is a separate
+    /// decision made by <see cref="ReleaseBrowserSupportPolicy"/>.</summary>
+    internal static bool TryIdentifySupportedBrowser(
+        string? processName,
+        PackageIdentityResolution packageIdentity,
+        ExecutableSignatureResolution executableSignature,
+        string? signerOrganization,
+        out NativeMessagingBrowser browser)
+    {
+        if (IsSupportedChrome(processName, packageIdentity, executableSignature, signerOrganization))
+        {
+            browser = NativeMessagingBrowser.Chrome;
+            return true;
+        }
+
+        if (IsSupportedEdge(processName, packageIdentity, executableSignature, signerOrganization))
+        {
+            browser = NativeMessagingBrowser.Edge;
+            return true;
+        }
+
+        browser = default;
+        return false;
+    }
 
     private static bool IsSupportedChrome(
         string? processName, PackageIdentityResolution packageIdentity,

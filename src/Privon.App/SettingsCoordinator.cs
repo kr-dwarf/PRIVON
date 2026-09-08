@@ -270,7 +270,9 @@ internal sealed class SettingsCoordinator : IDisposable
     // <paramref name="chromeReadinessOverride"/>/<paramref name="edgeReadinessOverride"/> exist ONLY
     // for HandleChromeMutation/HandleEdgeMutation's own use -- every other caller (ShowRequested,
     // every non-browser HandleMutation/HandleAddException path) omits both, so each browser's
-    // readiness continues to come from a fresh, independent Inspect read exactly as before.
+    // readiness continues to come from the browser-specific Inspect method. Those methods first
+    // enforce ReleaseBrowserSupportPolicy; only a browser supported by this release reaches the
+    // registration coordinator's read-only Inspect call.
     private void RenderCurrentState(
         ISettingsSurface surface,
         string? statusMessage = null,
@@ -301,6 +303,8 @@ internal sealed class SettingsCoordinator : IDisposable
     // subscriptions above, never from RenderCurrentState/ShowRequested itself.
     private NativeMessagingRegistrationReadiness InspectChrome()
     {
+        if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Chrome))
+            return NativeMessagingRegistrationReadiness.Failed;
         if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Chrome, out var identity))
             return NativeMessagingRegistrationReadiness.Failed;
 
@@ -311,6 +315,8 @@ internal sealed class SettingsCoordinator : IDisposable
     // why that exact value, not a subsequent independent Inspect(), is what gets displayed.
     private NativeMessagingRegistrationReadiness ProvisionChrome()
     {
+        if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Chrome))
+            return NativeMessagingRegistrationReadiness.Failed;
         if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Chrome, out var identity))
             return NativeMessagingRegistrationReadiness.Failed;
 
@@ -320,19 +326,22 @@ internal sealed class SettingsCoordinator : IDisposable
     // Returns the coordinator's OWN Repair() outcome -- same reasoning as ProvisionChrome.
     private NativeMessagingRegistrationReadiness RepairChrome()
     {
+        if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Chrome))
+            return NativeMessagingRegistrationReadiness.Failed;
         if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Chrome, out var identity))
             return NativeMessagingRegistrationReadiness.Failed;
 
         return _registrationCoordinator.Repair(identity.Browser, identity.NativeMessagingOrigin);
     }
 
-    // PRIVON 0.3.1 Gate E5G.1G -- the exact Edge counterpart of InspectChrome/ProvisionChrome/
-    // RepairChrome: same identity catalog, same already-owned coordinator, same read-only/explicit-
-    // action discipline. Chrome and Edge are mechanically independent -- each call here supplies
-    // ONLY NativeMessagingBrowser.Edge, never Chrome, and vice versa, so neither browser's mutation
-    // can ever reach the other's registry leaf or manifest.
+    // PRIVON 0.3.1 Chrome-only remediation: Edge's identity and registration implementation remain
+    // intact below for future reactivation, but the shared release policy fails closed before any
+    // read or mutation reaches that implementation in 0.3.1. Chrome and Edge remain mechanically
+    // independent -- each reachable coordinator call supplies only its own browser axis.
     private NativeMessagingRegistrationReadiness InspectEdge()
     {
+        if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Edge))
+            return NativeMessagingRegistrationReadiness.Failed;
         if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Edge, out var identity))
             return NativeMessagingRegistrationReadiness.Failed;
 
@@ -341,6 +350,8 @@ internal sealed class SettingsCoordinator : IDisposable
 
     private NativeMessagingRegistrationReadiness ProvisionEdge()
     {
+        if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Edge))
+            return NativeMessagingRegistrationReadiness.Failed;
         if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Edge, out var identity))
             return NativeMessagingRegistrationReadiness.Failed;
 
@@ -349,6 +360,8 @@ internal sealed class SettingsCoordinator : IDisposable
 
     private NativeMessagingRegistrationReadiness RepairEdge()
     {
+        if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Edge))
+            return NativeMessagingRegistrationReadiness.Failed;
         if (!VerifiedBrowserExtensionIdentities.TryGet(NativeMessagingBrowser.Edge, out var identity))
             return NativeMessagingRegistrationReadiness.Failed;
 

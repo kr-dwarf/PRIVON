@@ -71,9 +71,9 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     private readonly System.Windows.Controls.Button _chromeSetupButton;
     private readonly System.Windows.Controls.Button _chromeRepairButton;
 
-    // PRIVON 0.3.1 Gate E5G.1G -- the exact Edge counterpart of the Chrome fields above; same
-    // RENDER_ONLY/mutually-exclusive-visible discipline, keyed off
-    // SettingsViewState.EdgeNativeMessagingReadiness instead.
+    // PRIVON 0.3.1 Gate E5G.1G -- retained Edge presentation fields. The Chrome-only remediation
+    // renders them as explicitly unavailable and exposes neither action while the shared release
+    // policy defers Edge; the readiness-based rendering remains dormant for future reactivation.
     private readonly TextBlock _edgeStatusText;
     private readonly System.Windows.Controls.Button _edgeSetupButton;
     private readonly System.Windows.Controls.Button _edgeRepairButton;
@@ -286,9 +286,17 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
             ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    // PRIVON 0.3.1 Gate E5G.1G -- the exact Edge counterpart of RenderChromeSection.
+    // PRIVON 0.3.1 Chrome-only remediation: release scope overrides underlying Edge readiness.
     private void RenderEdgeSection(NativeMessagingRegistrationReadiness readiness)
     {
+        if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Edge))
+        {
+            _edgeStatusText.Text = "Edge: unavailable in 0.3.1";
+            _edgeSetupButton.Visibility = Visibility.Collapsed;
+            _edgeRepairButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
         _edgeStatusText.Text = readiness switch
         {
             NativeMessagingRegistrationReadiness.Fresh => "Edge: not set up",

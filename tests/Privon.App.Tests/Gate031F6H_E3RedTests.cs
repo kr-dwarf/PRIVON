@@ -1033,6 +1033,7 @@ public class Gate031F6H_E3RedTests
         private readonly DuplexMemoryStream _fromSession = new(); // session writes here; test reads
         public bool ThrowOnWrite { get; set; }
         public bool ThrowOnRead { get; set; }
+        public bool ReadWasAttempted { get; private set; }
 
         public Task WriteFromBrowserAsync(byte[] data) => _toSession.WriteAsync(data, 0, data.Length);
         public void CloseBrowserWriteSide() => _toSession.CloseWriteSide();
@@ -1056,8 +1057,13 @@ public class Gate031F6H_E3RedTests
         public override long Length => throw new NotSupportedException();
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
 
-        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-            ThrowOnRead ? throw new IOException("scripted read failure") : _toSession.ReadAsync(buffer, offset, count, cancellationToken);
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            ReadWasAttempted = true;
+            return ThrowOnRead
+                ? throw new IOException("scripted read failure")
+                : _toSession.ReadAsync(buffer, offset, count, cancellationToken);
+        }
 
         public override int Read(byte[] buffer, int offset, int count) => ReadAsync(buffer, offset, count, default).GetAwaiter().GetResult();
 
@@ -1741,6 +1747,7 @@ public class Gate031F6H_E3RedTests
 
     public static IEnumerable<object[]> UnsupportedBrowserFacts() =>
     [
+        ["valid signed Edge is deferred for 0.3.1", "msedge", PackageIdentityResolution.NoPackage, ExecutableSignatureResolution.Trusted, "Microsoft Corporation"],
         ["wrong process name", "firefox", PackageIdentityResolution.NoPackage, ExecutableSignatureResolution.Trusted, "Google LLC"],
         ["wrong package identity", "chrome", PackageIdentityResolution.Resolved, ExecutableSignatureResolution.Trusted, "Google LLC"],
         ["untrusted signature", "chrome", PackageIdentityResolution.NoPackage, ExecutableSignatureResolution.Untrusted, "Google LLC"],
@@ -1773,6 +1780,34 @@ public class Gate031F6H_E3RedTests
 
         var next = AcquireAsync(budget);
         Assert.Same(next, await Task.WhenAny(next, Task.Delay(TimeSpan.FromSeconds(2))));
+    }
+
+    [Fact]
+    public async Task E5G2_ChromeOriginCompatibleInvocation_WithAuthenticatedEdgeBinding_IsRejectedBeforeHello()
+    {
+        const string chromeOrigin = "chrome-extension://aieobgphcpmkfnhadocdhenigmackboo/";
+        var testAllowlist = new HashSet<string>(StringComparer.Ordinal) { chromeOrigin };
+        Assert.Equal("Host", InvokeClassifyKind([chromeOrigin, "--parent-window=0"], testAllowlist));
+
+        var registry = new WebChannelRegistry();
+        var manager = CreateManager(registry);
+        var budget = CreateBudget(1);
+        var binding = CreateFakeBinding(
+            1818, "msedge", PackageIdentityResolution.NoPackage,
+            ExecutableSignatureResolution.Trusted, "Microsoft Corporation", out var bindingDisposed);
+        var bindingSource = CreateFakeBindingSource(_ => (BrowserHostBindingStatus.Resolved, binding));
+        var (listenerProxy, _) = CreateStub(ListenerInterfaceType!);
+        var server = CreateServer(
+            listenerProxy, _ => 1818, bindingSource, registry, manager, budget);
+
+        var transport = new ScriptedSessionTransport();
+        object lease = await AcquireAsync(budget);
+        await ServerAdmitConnectionAsync(server, transport, DummyPipeHandle, lease);
+
+        Assert.True(bindingDisposed());
+        Assert.Empty(ManagerSnapshotLive(manager).Cast<object>());
+        Assert.False(ManagerTryGetAccepted(manager, 1818, out _));
+        Assert.False(transport.ReadWasAttempted);
     }
 
     [Fact]

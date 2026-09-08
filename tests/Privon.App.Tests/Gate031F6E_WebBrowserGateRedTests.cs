@@ -28,6 +28,14 @@ public class Gate031F6E_WebBrowserGateRedTests
     private const string GoogleOrganization = "Google LLC";
     private const string MicrosoftOrganization = "Microsoft Corporation";
 
+    [Fact]
+    public void E5G2_Release031Scope_ChromeSupported_EdgeDeferred_UnknownRejected()
+    {
+        Assert.True(ReleaseBrowserSupportPolicy.IsSupported(Privon.App.NativeMessagingBrowser.Chrome));
+        Assert.False(ReleaseBrowserSupportPolicy.IsSupported(Privon.App.NativeMessagingBrowser.Edge));
+        Assert.False(ReleaseBrowserSupportPolicy.IsSupported((Privon.App.NativeMessagingBrowser)99));
+    }
+
     // ==================================================================
     // R17 -- App connect policy facts: mechanical facts alone determine the predicate, independent
     // of any real process topology.
@@ -41,7 +49,7 @@ public class Gate031F6E_WebBrowserGateRedTests
     }
 
     [Fact]
-    public void R17_ValidEdgeFacts_IsSupportedTrue()
+    public void R17_ValidEdgeIdentityFacts_RemainSupportedIndependentOfReleaseScope()
     {
         bool result = WebBrowserGate.IsSupported(
             "msedge", PackageIdentityResolution.NoPackage, ExecutableSignatureResolution.Trusted, MicrosoftOrganization);
