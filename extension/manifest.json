@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PRIVON",
-  "version": "0.1.0",
+  "version": "0.3.2",
   "description": "PRIVON mechanical browser authorization runtime. No page content, DOM, or clipboard access of any kind.",
   "permissions": ["nativeMessaging"],
   "host_permissions": [
