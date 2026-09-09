@@ -82,6 +82,101 @@ public class SettingsCoordinatorTests : IDisposable
     private static readonly CanonicalValue Phone1 = new(PiiType.Phone, "01011112222");
 
     // ==================================================================
+    // PRIVON 0.3.2 Gate 032-C2 -- InspectChromeReadinessForStartup: the new PrivonAppUiBridge
+    // startup onboarding check must REUSE the exact SAME policy-gated Chrome identity/readiness path
+    // ShowRequested's own rendering already uses (InspectChrome) -- never a second, independently-
+    // derived Chrome identity/origin classification that could silently drift from it. Proven here by
+    // asserting the two calls agree, against the SAME coordinator instance, for both the Fresh and a
+    // read-only-different-origin case.
+    // ==================================================================
+
+    [Fact]
+    public void InspectChromeReadinessForStartup_AgreesWithShowRequestedsOwnChromeReadiness_Fresh()
+    {
+        var h = CreateHarness();
+
+        var startupReadiness = h.Coordinator.InspectChromeReadinessForStartup();
+        h.Coordinator.ShowRequested();
+        var surface = Assert.Single(h.CreatedSurfaces);
+
+        Assert.Equal(NativeMessagingRegistrationReadiness.Fresh, startupReadiness);
+        Assert.Equal(startupReadiness, surface.LastRenderedState!.ChromeNativeMessagingReadiness);
+    }
+
+    // ==================================================================
+    // PRIVON 0.3.2 Gate 032-C2R -- ShowRequestedForStartup: the Fresh-only startup path must render
+    // the ALREADY-SUPPLIED readiness snapshot on its first render WITHOUT calling InspectChrome()
+    // (i.e. the real registration coordinator/environment) a second time -- the exact defect an
+    // independent audit found in the prior candidate (PrivonAppUiBridgeTests' own
+    // Start_Fresh_TotalChromeInspection_EqualsExactlyOneDirectInspectSequence proves this end-to-end
+    // through the real Start() path; this is the narrower, isolated unit-level proof against
+    // SettingsCoordinator alone).
+    // ==================================================================
+
+    [Fact]
+    public void ShowRequestedForStartup_RendersSuppliedSnapshot_PerformsZeroRegistrationEnvironmentCalls()
+    {
+        var registrationEnvironment = new FakeNativeMessagingHostRegistrationEnvironment();
+        var registrationCoordinator = new NativeMessagingHostRegistrationCoordinator(registrationEnvironment);
+        var store = PrivonLocalStore.OpenOrCreate(_root);
+        var createdSurfaces = new List<FakeSettingsSurface>();
+        var coordinator = new SettingsCoordinator(
+            new ProtectionCategorySettingsService(store),
+            new UserExceptionService(store),
+            DetectionPipeline.CreateDefault(),
+            () => false,
+            () =>
+            {
+                var surface = new FakeSettingsSurface();
+                createdSurfaces.Add(surface);
+                return surface;
+            },
+            registrationCoordinator);
+
+        coordinator.ShowRequestedForStartup(NativeMessagingRegistrationReadiness.Fresh);
+
+        var surface = Assert.Single(createdSurfaces);
+        Assert.Equal(NativeMessagingRegistrationReadiness.Fresh, surface.LastRenderedState!.ChromeNativeMessagingReadiness);
+        Assert.Empty(registrationEnvironment.CallLog);
+    }
+
+    [Fact]
+    public void ShowRequestedForStartup_ExistingSurfaceAlreadyOpen_ActivatesExisting_NeverConstructsASecond()
+    {
+        var h = CreateHarness();
+        h.Coordinator.ShowRequested();
+        var surface = Assert.Single(h.CreatedSurfaces);
+
+        h.Coordinator.ShowRequestedForStartup(NativeMessagingRegistrationReadiness.Fresh);
+
+        Assert.Single(h.CreatedSurfaces);
+        Assert.Equal(1, surface.ActivateCallCount);
+    }
+
+    [Fact]
+    public void InspectChromeReadinessForStartup_IsReadOnly_PerformsZeroRegistrationMutation()
+    {
+        var registrationEnvironment = new FakeNativeMessagingHostRegistrationEnvironment();
+        var registrationCoordinator = new NativeMessagingHostRegistrationCoordinator(registrationEnvironment);
+        var store = PrivonLocalStore.OpenOrCreate(_root);
+        var coordinator = new SettingsCoordinator(
+            new ProtectionCategorySettingsService(store),
+            new UserExceptionService(store),
+            DetectionPipeline.CreateDefault(),
+            () => false,
+            () => new FakeSettingsSurface(),
+            registrationCoordinator);
+
+        coordinator.InspectChromeReadinessForStartup();
+
+        Assert.DoesNotContain(registrationEnvironment.CallLog, e =>
+            e.StartsWith("SetSubkeyDefaultValue(", StringComparison.Ordinal)
+            || e.StartsWith("DeleteSubkey(", StringComparison.Ordinal)
+            || e.StartsWith("WriteManifest(", StringComparison.Ordinal)
+            || e.StartsWith("DeleteManifest(", StringComparison.Ordinal));
+    }
+
+    // ==================================================================
     // UI-001 -- ShowRequested shows a surface.
     // ==================================================================
     [Fact]

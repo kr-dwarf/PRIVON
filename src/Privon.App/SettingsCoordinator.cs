@@ -109,8 +109,28 @@ internal sealed class SettingsCoordinator : IDisposable
 
     /// <summary>The tray's single Settings entry point. ONE_CURRENT_SETTINGS_WINDOW: activates the
     /// existing surface if one is already open; otherwise constructs a fresh one, wires it, renders
-    /// authoritative state (REOPEN_RELOADS), and shows it.</summary>
-    public void ShowRequested()
+    /// authoritative state (REOPEN_RELOADS), and shows it. Always uses a LIVE Chrome readiness read
+    /// (InspectChrome()) -- see <see cref="ShowRequestedForStartup"/> for the one narrow exception.</summary>
+    public void ShowRequested() => ShowSurface(chromeReadinessOverride: null);
+
+    // PRIVON 0.3.2 Gate 032-C2R -- EXACTLY_ONE_STARTUP_INSPECTION remediation: PrivonAppUiBridge's
+    // Fresh-only startup onboarding branch already obtained a Chrome readiness snapshot from its OWN
+    // single InspectChromeReadinessForStartup() call (the exact same InspectChrome() this type's own
+    // RenderCurrentState would otherwise call a SECOND time for the surface's initial render). This
+    // method shares ShowSurface's identical show/activate/wire logic with ShowRequested() -- never a
+    // duplicated Chrome identity/origin/readiness path -- and differs only in feeding that
+    // ALREADY-KNOWN snapshot into the FIRST render as an override, exactly the same override
+    // mechanism HandleChromeMutation already uses for a Provision/Repair click's own result.
+    // CALL_SCOPED_ONLY: the snapshot is never stored -- it flows through exactly one RenderCurrentState
+    // call and is then gone; every subsequent render (a mutation result, a reopen, or any other later
+    // ShowRequested()) reverts to InspectChrome()'s normal LIVE read, unchanged from before this gate.
+    // Only ever meaningful for Fresh (the only state Decision B ever auto-opens Settings for) -- but
+    // accepts the readiness value as supplied rather than asserting Fresh itself, since ownership of
+    // that classification decision belongs entirely to the caller (PrivonAppUiBridge), not here.
+    internal void ShowRequestedForStartup(NativeMessagingRegistrationReadiness chromeReadinessSnapshot) =>
+        ShowSurface(chromeReadinessOverride: chromeReadinessSnapshot);
+
+    private void ShowSurface(NativeMessagingRegistrationReadiness? chromeReadinessOverride)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_currentSurface is { } existing)
@@ -123,7 +143,7 @@ internal sealed class SettingsCoordinator : IDisposable
         WireSurface(surface);
         _currentSurface = surface;
 
-        RenderCurrentState(surface);
+        RenderCurrentState(surface, chromeReadinessOverride: chromeReadinessOverride);
         surface.Show();
     }
 
@@ -322,6 +342,13 @@ internal sealed class SettingsCoordinator : IDisposable
 
         return _registrationCoordinator.Provision(identity.Browser, identity.NativeMessagingOrigin);
     }
+
+    // PRIVON 0.3.2 Gate 032-C2 -- STARTUP_READONLY_INSPECTION: PrivonAppUiBridge's own new one-time
+    // startup onboarding check reuses this SAME InspectChrome() classification verbatim -- never a
+    // second, independently-derived Chrome identity/policy path -- so Settings' own rendering and
+    // the startup check can never independently drift. Read-only: identical zero-mutation guarantee
+    // as InspectChrome() itself; carries no ownership/policy judgment of its own.
+    internal NativeMessagingRegistrationReadiness InspectChromeReadinessForStartup() => InspectChrome();
 
     // Returns the coordinator's OWN Repair() outcome -- same reasoning as ProvisionChrome.
     private NativeMessagingRegistrationReadiness RepairChrome()

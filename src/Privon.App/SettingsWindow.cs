@@ -166,11 +166,15 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         listButtons.Children.Add(_deleteSelectedButton);
         listButtons.Children.Add(_resetExceptionsButton);
 
-        var chromeHeader = new TextBlock { Text = "Chrome Web/AI Protection Setup", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
+        // PRIVON 0.3.2 Gate 032-C2 -- "Chrome Protection" / "Connect Chrome" / "Reconnect Chrome":
+        // ordinary-user wording only, never Native Messaging/registry/manifest/host/Setup/Repair
+        // terminology. Edge's own header/button text below remains completely unchanged (Edge stays
+        // release-gated off in 0.3.x; this gate is Chrome-only).
+        var chromeHeader = new TextBlock { Text = "Chrome Protection", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
         _chromeStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 4) };
-        _chromeSetupButton = new System.Windows.Controls.Button { Content = "Set up", Margin = new Thickness(16, 0, 16, 4), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _chromeSetupButton = new System.Windows.Controls.Button { Content = "Connect Chrome", Margin = new Thickness(16, 0, 16, 4), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         _chromeSetupButton.Click += (_, _) => ChromeNativeMessagingProvisionRequested?.Invoke(this, EventArgs.Empty);
-        _chromeRepairButton = new System.Windows.Controls.Button { Content = "Repair", Margin = new Thickness(16, 0, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _chromeRepairButton = new System.Windows.Controls.Button { Content = "Reconnect Chrome", Margin = new Thickness(16, 0, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         _chromeRepairButton.Click += (_, _) => ChromeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
 
         var edgeHeader = new TextBlock { Text = "Edge Web/AI Protection Setup", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
@@ -290,11 +294,15 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     // for any of those).
     private void RenderChromeSection(NativeMessagingRegistrationReadiness readiness)
     {
+        // PRIVON 0.3.2 Gate 032-C2 -- Fresh/Ready/OwnedNeedsRepair now use ordinary-user connection
+        // language ("connected"/"not connected"/"connection needs updating") instead of Setup/Repair
+        // terminology. ForeignBlocked/OrphanBlocked/default wording is UNCHANGED (section 7: existing
+        // diagnostic wording may remain).
         _chromeStatusText.Text = readiness switch
         {
-            NativeMessagingRegistrationReadiness.Fresh => "Chrome: not set up",
-            NativeMessagingRegistrationReadiness.Ready => "Chrome: ready",
-            NativeMessagingRegistrationReadiness.OwnedNeedsRepair => "Chrome: needs repair",
+            NativeMessagingRegistrationReadiness.Fresh => "Chrome: not connected",
+            NativeMessagingRegistrationReadiness.Ready => "Chrome: connected",
+            NativeMessagingRegistrationReadiness.OwnedNeedsRepair => "Chrome: connection needs updating",
             NativeMessagingRegistrationReadiness.ForeignBlocked => "Chrome: blocked (already used by another program)",
             NativeMessagingRegistrationReadiness.OrphanBlocked => "Chrome: blocked (conflicting file present)",
             _ => "Chrome: unavailable",

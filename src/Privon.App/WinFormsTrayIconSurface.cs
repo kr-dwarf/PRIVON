@@ -87,11 +87,17 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
             ContextMenuStrip = _menu,
             Visible = false,
         };
+
+        // PRIVON 0.3.2 Gate 032-C2 -- the reconnect notification's click is the ONE authorized
+        // trigger for ChromeReconnectNotificationClicked; NotifyIcon.BalloonTipClicked is the real
+        // WinForms mechanism for that. No other NotifyIcon event is wired to it.
+        _icon.BalloonTipClicked += (_, _) => ChromeReconnectNotificationClicked?.Invoke(this, EventArgs.Empty);
     }
 
     public event EventHandler? ExitRequested;
     public event EventHandler? AutoStartToggleRequested;
     public event EventHandler? SettingsRequested;
+    public event EventHandler? ChromeReconnectNotificationClicked;
 
     public void Show()
     {
@@ -103,6 +109,15 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _autoStartItem.Checked = isChecked;
+    }
+
+    // PRIVON 0.3.2 Gate 032-C2 -- non-technical copy only (section 8): never "Native Messaging",
+    // "registry", "manifest", "host", "Setup", or "Repair". ToolTipIcon.Info only -- never a warning/
+    // error icon, since this is routine guidance, not a fault.
+    public void ShowChromeReconnectNotification()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _icon.ShowBalloonTip(10000, "PRIVON", "Chrome connection needs updating. Open PRIVON to reconnect.", ToolTipIcon.Info);
     }
 
     /// <summary>Deterministic disposal -- sets <c>Visible = false</c> BEFORE disposing so the icon
