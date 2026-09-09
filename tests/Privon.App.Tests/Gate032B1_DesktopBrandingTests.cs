@@ -42,8 +42,11 @@ public class Gate032B1_DesktopBrandingTests
     private const string SquareIconPngResourceName = "Privon.App.Assets.privon-icon-128.png";
 
     private const string WordmarkSha256 = "0e0d8fde47d3dbe8ca13f03adc1eae042800cf0265413aec974b2082140bd2ec";
-    private const string SquareIconSha256 = "b6b0404ef89dc7c59346eefd6fc452875b6da0f194f108cc38c8857a30cbad9a";
-    private const string IcoSha256 = "7152576503fd083461a5be89f525c4f929258b46043c4e0610c843a6c21d49c9";
+    // PRIVON 0.3.2 Gate 032-B1C -- corrected to the transparent-background PV master
+    // (PRIVON_PV_transparent_master.png), replacing the earlier opaque-white-background derivation.
+    // Wordmark identity is untouched by this correction.
+    private const string SquareIconSha256 = "0ca845c5b89011e277ca9731123152635194573db90b6ca41297a7cf2075c985";
+    private const string IcoSha256 = "87fff3f27acc778738c551ef80477f1c4d13debef22026903c0e545943c7ca82";
 
     private static readonly int[] RequiredIcoFrameSizes = [16, 24, 32, 48, 64, 128];
 
