@@ -43,6 +43,11 @@ namespace Privon.App;
 /// PRIVACY_UI: the raw exception-value text field is cleared after every Add attempt (success or
 /// rejection) -- never left echoing a value that may have just been rejected as a duplicate
 /// candidate/type-mismatch -- and no PII value is ever placed into this window's <see cref="Window.Title"/>.
+///
+/// PRIVON 0.3.2 Gate 032-B1 -- BRANDING_ONLY: <see cref="Window.Icon"/> and a restrained header
+/// wordmark image are now sourced from <see cref="BrandResources"/> (this assembly's own embedded
+/// PNG/ICO resources, never a filesystem path). Purely visual -- no control behavior, no
+/// provisioning/security state logic, and no architectural change to this window.
 /// </summary>
 internal sealed class SettingsWindow : Window, ISettingsSurface
 {
@@ -97,6 +102,20 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         Height = 480;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Icon = BrandResources.LoadWindowIconImage();
+
+        // PRIVON 0.3.2 Gate 032-B1 -- restrained header brand treatment only: the official
+        // horizontal PV + PRIVON wordmark, loaded from this assembly's own embedded resource
+        // (never an absolute filesystem path), Stretch=Uniform with only Height constrained so its
+        // native 385x120 aspect ratio is always preserved regardless of window width.
+        var wordmark = new System.Windows.Controls.Image
+        {
+            Source = BrandResources.LoadWordmarkImage(),
+            Height = 40,
+            Stretch = System.Windows.Media.Stretch.Uniform,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Margin = new Thickness(16, 12, 16, 4),
+        };
 
         _degradedBannerText = new TextBlock
         {
@@ -162,6 +181,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         _edgeRepairButton.Click += (_, _) => EdgeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
 
         var panel = new StackPanel();
+        panel.Children.Add(wordmark);
         panel.Children.Add(_degradedBannerText);
         panel.Children.Add(_statusText);
         panel.Children.Add(scopeHeader);

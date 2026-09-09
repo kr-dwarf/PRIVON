@@ -27,9 +27,13 @@ namespace Privon.App;
 /// (already pumped by <see cref="System.Windows.Threading.Dispatcher"/>) -- a common, working
 /// technique for hosting a WinForms tray icon inside a WPF application.
 ///
-/// <see cref="Icon"/> uses <see cref="SystemIcons.Application"/> -- no custom <c>.ico</c> resource
-/// is embedded for 0.1, keeping packaging minimal; swapping in a branded icon later does not
-/// change this type's contract.
+/// PRIVON 0.3.2 Gate 032-B1: <see cref="Icon"/> now uses the official PRIVON PV icon, loaded via
+/// <see cref="BrandResources.LoadTrayIcon"/> from this assembly's own embedded
+/// <c>Assets\privon.ico</c> resource -- never <see cref="SystemIcons.Application"/>, never a
+/// filesystem path, never a temp-extracted file. That call constructs a real <see cref="Icon"/>
+/// instance owning an unmanaged GDI handle distinct from the shared system icon it replaces, so
+/// this type now owns and disposes it (<see cref="_brandIcon"/>) exactly like every other
+/// disposable field below.
 ///
 /// Phase 0.2I adds exactly one more menu item -- a checkable "Windows 시작 시 자동 실행" toggle,
 /// placed above a separator from the pre-existing Exit item -- and nothing else; still no
@@ -43,6 +47,7 @@ namespace Privon.App;
 /// </summary>
 internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
 {
+    private readonly Icon _brandIcon;
     private readonly NotifyIcon _icon;
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _settingsItem;
@@ -73,9 +78,11 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(_exitItem);
 
+        _brandIcon = BrandResources.LoadTrayIcon();
+
         _icon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = _brandIcon,
             Text = "PRIVON — 실행 중",
             ContextMenuStrip = _menu,
             Visible = false,
@@ -109,6 +116,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
 
         _icon.Visible = false;
         _icon.Dispose();
+        _brandIcon.Dispose();
         _menu.Dispose();
         _settingsItem.Dispose();
         _autoStartItem.Dispose();

@@ -8,6 +8,11 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <StartupObject>Privon.App.Program</StartupObject>
+    <!-- PRIVON 0.3.2 Gate 032-B1: embeds the official PRIVON PV icon as this EXE's native Win32
+         icon resource (Explorer/taskbar/Alt Tab). Separate from, and in addition to, the
+         EmbeddedResource entries below, which let production code (BrandResources) load the same
+         bytes via Assembly.GetManifestResourceStream at runtime. -->
+    <ApplicationIcon>Assets\privon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +21,24 @@
     <ProjectReference Include="..\Privon.Detection\Privon.Detection.csproj" />
     <ProjectReference Include="..\Privon.Storage\Privon.Storage.csproj" />
     <ProjectReference Include="..\Privon.Windows\Privon.Windows.csproj" />
+  </ItemGroup>
+
+  <!-- PRIVON 0.3.2 Gate 032-B1: official brand assets, embedded as .NET manifest resources so
+       BrandResources (the sole production loader) can read them via
+       Assembly.GetManifestResourceStream, with no absolute filesystem path and no loose file
+       dependency alongside the published EXE. LogicalName is pinned explicitly rather than left
+       to the SDK's default namespace-based naming, so the resource name is a stable, testable
+       contract. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\privon.ico">
+      <LogicalName>Privon.App.Assets.privon.ico</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\privon-icon-128.png">
+      <LogicalName>Privon.App.Assets.privon-icon-128.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\privon-wordmark.png">
+      <LogicalName>Privon.App.Assets.privon-wordmark.png</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>
