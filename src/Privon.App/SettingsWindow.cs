@@ -319,7 +319,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     {
         if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Edge))
         {
-            _edgeStatusText.Text = "Edge: unavailable in 0.3.1";
+            _edgeStatusText.Text = "Edge: unavailable";
             _edgeSetupButton.Visibility = Visibility.Collapsed;
             _edgeRepairButton.Visibility = Visibility.Collapsed;
             return;

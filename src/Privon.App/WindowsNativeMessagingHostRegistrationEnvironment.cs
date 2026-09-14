@@ -23,11 +23,9 @@ namespace Privon.App;
 /// member, and no subtree-deletion member. An undefined <see cref="NativeMessagingBrowser"/> value
 /// fails closed in <see cref="LeafSubKeyPath"/> BEFORE any mechanics call is made.
 ///
-/// NOT WIRED (Gate E5G.P1 scope): constructing this type performs no registry read, no registry
-/// write, and no filesystem access whatsoever. Nothing in this codebase constructs it yet -- no
-/// composition root, no startup path, and no <see cref="NativeMessagingHostRegistrar.Install"/> call
-/// exists anywhere. Registration wiring belongs to a later gate, which additionally requires a
-/// verified browser extension origin that does not exist yet.
+/// Constructing this type performs no registry read, registry write, or filesystem access. The
+/// Settings registration coordinator uses it for read-only inspection and for explicit, policy-gated
+/// user Provision/Repair actions; startup construction alone does not mutate registration state.
 /// </summary>
 internal sealed class WindowsNativeMessagingHostRegistrationEnvironment : INativeMessagingHostRegistrationEnvironment
 {

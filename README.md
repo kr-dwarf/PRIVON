@@ -7,9 +7,9 @@
 **PRIVON — turn on privacy protection before you use AI.**
 
 > PRIVON is a public beta, distributed for real-world validation. It does not claim
-> 1.0-level stability. This document describes the current codebase — the v0.2.1 release
-> candidate. That is not a claim that v0.2.1 has been published as a tagged release; see
-> [Release provenance](#release-provenance) for what has actually been published.
+> 1.0-level stability. This document describes the v0.3.2 candidate while release
+> finalization is in progress. It does not claim that v0.3.2 has been publicly published;
+> see [Release provenance](#release-provenance) for the verified release state.
 
 ---
 
@@ -19,19 +19,16 @@ PRIVON is a local-first privacy protection utility for Windows.
 
 - If text you copy to the clipboard contains a supported personal-information pattern
   (such as a phone number or a Korean resident registration number), PRIVON detects and
-  protects it locally, in the clipboard, **before** you manually paste it into ChatGPT —
-  even if you copied that text while a different application was active, as long as the
-  supported ChatGPT Windows Desktop identity (see [Supported Scope](#supported-scope)) is
-  the active window by the time you paste.
+  protects it locally, in the clipboard, **before** you manually paste it into a supported
+  AI target. This includes the authorized ChatGPT and Claude desktop identities and the
+  exact Chrome websites listed under [Supported Scope](#supported-scope).
 - All processing happens on your own PC. Clipboard content is never sent to an external
   server.
 - PRIVON continues to prioritize the **Korean (KR) usage environment** and the
-  **clipboard path**. The supported protection target is the currently supported
-  Microsoft Store package identity of **ChatGPT Windows Desktop** — not ChatGPT Web
-  (browser-based), and not every application or executable that happens to be named or
-  process-named "ChatGPT." An unsupported desktop identity fails closed (PRIVON does not
-  protect it), and PRIVON aims not to interfere with your ordinary clipboard use outside
-  the one supported path.
+  **clipboard path**. Desktop and browser identities are authenticated narrowly; a
+  similarly named executable or an unapproved website is not accepted. Unsupported or
+  uncertain identities fail closed, and PRIVON aims not to interfere with ordinary
+  clipboard use outside the supported paths.
 
 ---
 
@@ -44,14 +41,13 @@ No development tools or command line needed — just these steps.
 3. Double-click `PRIVON.exe` in the extracted folder to run it.
 4. You'll know it's running correctly when the PRIVON icon appears in the notification
    area (system tray) at the bottom right of your screen.
-5. Now use ChatGPT as usual. Whenever ChatGPT Windows Desktop is (or becomes) the
-   currently active (foreground) window, PRIVON checks the current clipboard content and
-   protects it, if needed, before you paste — this works even if you copied the text a
-   moment earlier while a different application was active.
+5. Use a supported desktop target as usual. For supported Chrome websites, install the
+   approved PRIVON Chrome extension and open **Settings** to complete **Connect Chrome**
+   when offered. Connection changes are always an explicit user action.
 
-> PRIVON only acts based on which window currently has focus (i.e., whether it's ChatGPT
-> Windows Desktop or not). While you're using any other application — including ChatGPT in
-> a web browser — PRIVON does not read or change the clipboard at all.
+> PRIVON acts only when the current foreground identity is an authorized desktop target or
+> an authenticated Chrome tab at an exact supported origin. Other applications and browser
+> sites are not authorized.
 
 ---
 
@@ -84,12 +80,15 @@ not the original phone number.
 ## Supported Scope
 
 - Windows 10 / 11 (64-bit, win-x64)
-- Target application: the **currently supported Microsoft Store package identity of
-  ChatGPT Windows Desktop**. ChatGPT Web / browser-based ChatGPT, any other executable
-  that merely happens to be named or process-named "ChatGPT," and any other/older/
-  unrecognized ChatGPT Desktop package identity are **not** supported protection
-  targets — an unsupported identity fails closed rather than falling back to
-  name-only recognition.
+- Desktop targets: the currently authorized **ChatGPT Windows Desktop Microsoft Store
+  package identity** and the authenticated **Claude Desktop** application. Name-only
+  lookalikes and unrecognized identities are not accepted.
+- Chrome Web targets: only `https://chatgpt.com`, `https://claude.ai`,
+  `https://gemini.google.com`, `https://grok.com`, and `https://chat.deepseek.com`, through
+  the approved PRIVON Chrome extension and an authenticated local connection. Substituted,
+  malformed, or other origins are not supported.
+- Microsoft Edge integration is unavailable and deferred.
+- Antigravity is unsupported.
 - Korean (KR) usage prioritized
 - Clipboard path (clipboard-first) prioritized, now including content you copied before
   switching to ChatGPT
@@ -149,15 +148,33 @@ Settings control of their own — there is nothing to turn on or off for them. S
 no Undo/Restore for a change you already made; a reset restores defaults, it does not step
 back through history.
 
+### Chrome connection and reconnection
+
+- **Not connected:** On a fresh installation, PRIVON performs one read-only readiness
+  check and may show **Connect Chrome**. Starting PRIVON or merely opening Settings does
+  not create registry or manifest entries. Choose **Connect Chrome** explicitly to connect.
+- **Connected:** The owned Native Messaging registration and manifest match the current
+  PRIVON executable and approved extension.
+- **Connection needs updating:** Moving the portable PRIVON executable can leave an owned
+  registration pointing to its old path. PRIVON may notify you, but clicking the
+  notification or opening Settings does not repair anything. Choose **Reconnect Chrome**
+  explicitly after confirming the current PRIVON location.
+- **Blocked or unavailable:** PRIVON does not take over another program's registration and
+  does not silently adopt an ambiguous leftover manifest. An inspection failure is not
+  shown as connected. Resolve the conflicting owner/file first; do not delete unfamiliar
+  registrations merely to force a connection.
+
+Chrome connection actions apply only to Chrome. Edge remains unavailable.
+
 ---
 
 ## What PRIVON Does Not Guarantee
 
 PRIVON does not claim or guarantee any of the following:
 
-- Protection for ChatGPT Web (browser-based) or any other application. The only
-  supported protection target is the currently supported Microsoft Store package
-  identity of **ChatGPT Windows Desktop** — see [Supported Scope](#supported-scope).
+- Protection for arbitrary applications or websites. Only the exact desktop identities
+  and Chrome origins in [Supported Scope](#supported-scope) are authorized.
+- Protection in Edge or Antigravity; both are outside the current supported scope.
 - Full anonymization.
 - Regulatory/privacy-law compliance certification.
 - Detection of every possible identifier beyond the categories explicitly listed above.
@@ -223,7 +240,21 @@ You do not need to, and should not, disable Windows Defender or SmartScreen itse
 ## Exiting PRIVON
 
 Right-click the PRIVON tray icon in the notification area, then select **Exit** to close
-the program.
+the program. **Exit only closes PRIVON; it is not an uninstall or cleanup action.**
+
+### Removing a portable copy and persistent state
+
+Before deleting the extracted folder, use the tray menu to turn **Auto-start** off. The
+current UI does not provide a general removal action for the Chrome Native Messaging
+registration. Do not delete an unfamiliar registry entry or manifest that PRIVON reports
+as foreign or conflicting.
+
+Deleting `PRIVON.exe` or its folder alone may leave Windows Auto-start registration, the
+Chrome Native Messaging registration and manifest, encrypted product-local state under
+`%LocalAppData%\PRIVON`, opt-in diagnostic logs if diagnostics were enabled, and the
+installed Chrome extension and its browser-managed state. Browser extension removal is
+performed in Chrome. Product-local files and any remaining owned registration may require
+manual cleanup. There is no installer or uninstaller in v0.3.2.
 
 ---
 
@@ -240,6 +271,10 @@ PRIVON can optionally launch automatically when you log in to Windows.
 - If you later move or rename the extracted PRIVON folder while Auto-start is enabled,
   PRIVON will not falsely report Auto-start as still working — it fails closed and shows
   Auto-start as off. Simply turn it back on from the new location to re-register it.
+
+Native Messaging and Auto-start store separate absolute executable paths. After moving
+PRIVON, use **Reconnect Chrome** for the Chrome connection and explicitly toggle
+Auto-start from the new location. Neither path repairs itself silently.
 
 Running PRIVON a second time while it's already running does not start a duplicate copy —
 the newer launch simply closes, and your original PRIVON instance (tray icon, clipboard
@@ -301,11 +336,11 @@ local user data files), and only then produces a ZIP + SHA-256 checksum. `-Versi
 required — there is no default:
 
 ```powershell
-.\tools\publish-release.ps1 -Version 0.2.1
+.\tools\publish-release.ps1 -Version 0.3.2
 ```
 
-(No certified v0.2.1 package has been produced as of this document — the command above
-shows the invocation shape, not a claim that such a package already exists.)
+(The command above shows the invocation shape. This README does not claim that a certified
+v0.3.2 desktop release package has been published.)
 
 ---
 
@@ -313,8 +348,7 @@ shows the invocation shape, not a claim that such a package already exists.)
 
 - PRIVON's release gate requires the full local automated test suite
   (Core/Detection/Windows/Storage/App) to pass 100% green, with 0 build warnings and 0
-  build errors, before a release candidate is packaged — the current v0.2.1 candidate has
-  passed this full regression. These are local automated tests run during development;
+  build errors, before a release candidate is packaged. These are local automated tests;
   this repository does not currently run GitHub Actions or any other CI. (Exact, dated
   pass counts belong in release evidence/release notes, not this evergreen document.)
 - 320 real trials writing to the actual Windows clipboard: lower/medium-risk personal
@@ -323,8 +357,8 @@ shows the invocation shape, not a claim that such a package already exists.)
   than silently auto-protected.
 - Real Windows + real ChatGPT Windows Desktop clipboard-protection smoke test: passed,
   including copying content in another application before switching to ChatGPT.
-- Real-world check that other, unsupported applications — including ChatGPT in a web
-  browser — are not interfered with: passed.
+- Historical desktop smoke checks confirmed that unsupported applications were not
+  interfered with. Chrome Web support has its own extension and authorization tests.
 - Windows session lock (Win+L) behavior smoke test: passed.
 - Optional Auto-start, tested through an actual Windows restart/login with it turned on,
   and again with it turned off: passed both ways.
@@ -354,8 +388,14 @@ mean "works perfectly in every environment."
 
 **v0.2.1**
 
-- Not published as a tagged release — this remains only the current release candidate (see
-  the note at the top of this document).
+- Historical candidate; retained here as an earlier provenance record.
+
+**v0.3.2 candidate**
+
+- Current source is in release finalization; this is not a claim of public publication.
+- The Chrome Web Store 0.3.2 package was submitted for review with auto-publish disabled.
+- Exact submitted-package provenance is recorded in
+  [`docs/release-0.3.2-store-provenance.md`](./docs/release-0.3.2-store-provenance.md).
 
 ---
 

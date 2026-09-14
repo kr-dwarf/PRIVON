@@ -16,12 +16,10 @@ namespace Privon.App;
 /// authorization/challenge latency, and an unsupported desktop process can never be re-routed
 /// through the Web branch by process-name confusion.
 ///
-/// PRODUCTION_DEFAULT (Gate 031F5A.2 section 8, frozen): <paramref name="webSource"/> is
-/// <see langword="null"/> in every real 0.3.1 launch before Phase E ships a concrete
-/// <see cref="IWebClipboardAuthorizationSource"/> implementation -- <see cref="PrivonAppComposition"/>
-/// passes nothing. A null source is therefore not an edge case but the actual production shape:
-/// every non-Windows target fails closed to <see cref="ClipboardAuthorization.Outside"/>, truthfully,
-/// with no "always trusted" production fake ever introduced.
+/// A production <see cref="PrivonAppComposition"/> supplies the concrete
+/// <see cref="IWebClipboardAuthorizationSource"/>. A null source remains a supported fail-closed
+/// shape for callers that do not configure Web authorization: every non-Windows target resolves to
+/// <see cref="ClipboardAuthorization.Outside"/> with no trusted fallback.
 ///
 /// MALFORMED_RESULT_FAIL_CLOSED (Gate 031F5A.2 section 8): even though
 /// <see cref="WebClipboardAuthorization"/>'s own constructor already rejects an undefined/zero

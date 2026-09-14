@@ -17,11 +17,9 @@ namespace Privon.App;
 /// this type IS now constructed by <see cref="PrivonAppComposition"/> -- see that type's own
 /// SHARED_CHANNEL_TRUTH doc -- against the exact same <see cref="WebChannelRegistry"/>/
 /// <see cref="WebChannelManager"/> pair the real Web channel host server (<see cref="WebServerRuntime"/>)
-/// consults, never an independently-constructed registry/manager. Production Web clipboard authorization
-/// still stays fail-closed at E5F: <see cref="WebExtensionOriginAllowlist.Production"/> remains empty, so
-/// no real Native Messaging channel can ever reach the Accepted state this type's own decision-time
-/// bracket requires -- construction of this source is not itself authorization; only a future gate may
-/// populate the allowlist with verified extension identities.
+/// consults, never an independently-constructed registry/manager. Construction is not authorization:
+/// production accepts only an exact origin in <see cref="WebExtensionOriginAllowlist.Production"/> and
+/// still requires this type's complete decision-time identity, session, challenge, and freshness bracket.
 ///
 /// NO_TRANSPORT_ACCESS (Gate 031F6L G14): this type never reads from or writes to a
 /// <see cref="System.IO.Stream"/> directly, and never introduces a second transport reader or dispatcher

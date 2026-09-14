@@ -234,9 +234,9 @@ internal sealed class PrivonAppComposition : IDisposable
     // existing _targetCapture/_epochTracker fields, and threaded into both
     // ClipboardPrivacyCoordinator's and ClipboardDecisionActionResolver's existing optional
     // webAuthorizationSource constructor parameter -- never a second, independently-constructed
-    // instance. Production stays fail-closed regardless: WebExtensionOriginAllowlist.Production is
-    // still empty (E5D/E3-frozen, unchanged by this gate), so no real Native Messaging channel can
-    // ever reach the Accepted state this source's own decision-time bracket requires. Exposed via
+    // instance. Production stays fail-closed: WebExtensionOriginAllowlist.Production is the single
+    // authority for the exact verified extension origins that may reach this source's decision-time
+    // bracket. Exposed via
     // WebAuthorizationSource below; not IDisposable (see that type's own doc) so it needs no explicit
     // teardown step in RollbackPartialStartup/Dispose beyond simply nulling the field.
     private WebClipboardAuthorizationSource? _webAuthorizationSource;
@@ -390,8 +390,8 @@ internal sealed class PrivonAppComposition : IDisposable
     /// composition ever constructs (see <see cref="_webAuthorizationSource"/>'s own doc). Returns the
     /// exact same instance on every read -- never a second, independently-constructed source.
     /// <see langword="null"/> before a successful <see cref="Start"/>. Existence alone never
-    /// authorizes anything: <see cref="WebExtensionOriginAllowlist.Production"/> stays empty, so no
-    /// accepted Native Messaging session is ever reachable in production today.</summary>
+    /// authorizes anything: authorization still requires an exact production extension origin and
+    /// every decision-time identity/session/freshness witness.</summary>
     internal IWebClipboardAuthorizationSource? WebAuthorizationSource => _webAuthorizationSource;
 
     /// <summary>
