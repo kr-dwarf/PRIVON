@@ -43,6 +43,11 @@ namespace Privon.App;
 /// PRIVACY_UI: the raw exception-value text field is cleared after every Add attempt (success or
 /// rejection) -- never left echoing a value that may have just been rejected as a duplicate
 /// candidate/type-mismatch -- and no PII value is ever placed into this window's <see cref="Window.Title"/>.
+///
+/// PRIVON 0.3.2 Gate 032-B1 -- BRANDING_ONLY: <see cref="Window.Icon"/> and a restrained header
+/// wordmark image are now sourced from <see cref="BrandResources"/> (this assembly's own embedded
+/// PNG/ICO resources, never a filesystem path). Purely visual -- no control behavior, no
+/// provisioning/security state logic, and no architectural change to this window.
 /// </summary>
 internal sealed class SettingsWindow : Window, ISettingsSurface
 {
@@ -97,6 +102,20 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         Height = 480;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Icon = BrandResources.LoadWindowIconImage();
+
+        // PRIVON 0.3.2 Gate 032-B1 -- restrained header brand treatment only: the official
+        // horizontal PV + PRIVON wordmark, loaded from this assembly's own embedded resource
+        // (never an absolute filesystem path), Stretch=Uniform with only Height constrained so its
+        // native 385x120 aspect ratio is always preserved regardless of window width.
+        var wordmark = new System.Windows.Controls.Image
+        {
+            Source = BrandResources.LoadWordmarkImage(),
+            Height = 40,
+            Stretch = System.Windows.Media.Stretch.Uniform,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Margin = new Thickness(16, 12, 16, 4),
+        };
 
         _degradedBannerText = new TextBlock
         {
@@ -147,11 +166,15 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         listButtons.Children.Add(_deleteSelectedButton);
         listButtons.Children.Add(_resetExceptionsButton);
 
-        var chromeHeader = new TextBlock { Text = "Chrome Web/AI Protection Setup", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
+        // PRIVON 0.3.2 Gate 032-C2 -- "Chrome Protection" / "Connect Chrome" / "Reconnect Chrome":
+        // ordinary-user wording only, never Native Messaging/registry/manifest/host/Setup/Repair
+        // terminology. Edge's own header/button text below remains completely unchanged (Edge stays
+        // release-gated off in 0.3.x; this gate is Chrome-only).
+        var chromeHeader = new TextBlock { Text = "Chrome Protection", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
         _chromeStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 4) };
-        _chromeSetupButton = new System.Windows.Controls.Button { Content = "Set up", Margin = new Thickness(16, 0, 16, 4), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _chromeSetupButton = new System.Windows.Controls.Button { Content = "Connect Chrome", Margin = new Thickness(16, 0, 16, 4), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         _chromeSetupButton.Click += (_, _) => ChromeNativeMessagingProvisionRequested?.Invoke(this, EventArgs.Empty);
-        _chromeRepairButton = new System.Windows.Controls.Button { Content = "Repair", Margin = new Thickness(16, 0, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _chromeRepairButton = new System.Windows.Controls.Button { Content = "Reconnect Chrome", Margin = new Thickness(16, 0, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         _chromeRepairButton.Click += (_, _) => ChromeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
 
         var edgeHeader = new TextBlock { Text = "Edge Web/AI Protection Setup", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
@@ -162,6 +185,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         _edgeRepairButton.Click += (_, _) => EdgeNativeMessagingRepairRequested?.Invoke(this, EventArgs.Empty);
 
         var panel = new StackPanel();
+        panel.Children.Add(wordmark);
         panel.Children.Add(_degradedBannerText);
         panel.Children.Add(_statusText);
         panel.Children.Add(scopeHeader);
@@ -270,11 +294,15 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     // for any of those).
     private void RenderChromeSection(NativeMessagingRegistrationReadiness readiness)
     {
+        // PRIVON 0.3.2 Gate 032-C2 -- Fresh/Ready/OwnedNeedsRepair now use ordinary-user connection
+        // language ("connected"/"not connected"/"connection needs updating") instead of Setup/Repair
+        // terminology. ForeignBlocked/OrphanBlocked/default wording is UNCHANGED (section 7: existing
+        // diagnostic wording may remain).
         _chromeStatusText.Text = readiness switch
         {
-            NativeMessagingRegistrationReadiness.Fresh => "Chrome: not set up",
-            NativeMessagingRegistrationReadiness.Ready => "Chrome: ready",
-            NativeMessagingRegistrationReadiness.OwnedNeedsRepair => "Chrome: needs repair",
+            NativeMessagingRegistrationReadiness.Fresh => "Chrome: not connected",
+            NativeMessagingRegistrationReadiness.Ready => "Chrome: connected",
+            NativeMessagingRegistrationReadiness.OwnedNeedsRepair => "Chrome: connection needs updating",
             NativeMessagingRegistrationReadiness.ForeignBlocked => "Chrome: blocked (already used by another program)",
             NativeMessagingRegistrationReadiness.OrphanBlocked => "Chrome: blocked (conflicting file present)",
             _ => "Chrome: unavailable",
@@ -291,7 +319,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     {
         if (!ReleaseBrowserSupportPolicy.IsSupported(NativeMessagingBrowser.Edge))
         {
-            _edgeStatusText.Text = "Edge: unavailable in 0.3.1";
+            _edgeStatusText.Text = "Edge: unavailable";
             _edgeSetupButton.Visibility = Visibility.Collapsed;
             _edgeRepairButton.Visibility = Visibility.Collapsed;
             return;

@@ -27,9 +27,13 @@ namespace Privon.App;
 /// (already pumped by <see cref="System.Windows.Threading.Dispatcher"/>) -- a common, working
 /// technique for hosting a WinForms tray icon inside a WPF application.
 ///
-/// <see cref="Icon"/> uses <see cref="SystemIcons.Application"/> -- no custom <c>.ico</c> resource
-/// is embedded for 0.1, keeping packaging minimal; swapping in a branded icon later does not
-/// change this type's contract.
+/// PRIVON 0.3.2 Gate 032-B1: <see cref="Icon"/> now uses the official PRIVON PV icon, loaded via
+/// <see cref="BrandResources.LoadTrayIcon"/> from this assembly's own embedded
+/// <c>Assets\privon.ico</c> resource -- never <see cref="SystemIcons.Application"/>, never a
+/// filesystem path, never a temp-extracted file. That call constructs a real <see cref="Icon"/>
+/// instance owning an unmanaged GDI handle distinct from the shared system icon it replaces, so
+/// this type now owns and disposes it (<see cref="_brandIcon"/>) exactly like every other
+/// disposable field below.
 ///
 /// Phase 0.2I adds exactly one more menu item -- a checkable "Windows 시작 시 자동 실행" toggle,
 /// placed above a separator from the pre-existing Exit item -- and nothing else; still no
@@ -43,6 +47,7 @@ namespace Privon.App;
 /// </summary>
 internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
 {
+    private readonly Icon _brandIcon;
     private readonly NotifyIcon _icon;
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _settingsItem;
@@ -73,18 +78,26 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(_exitItem);
 
+        _brandIcon = BrandResources.LoadTrayIcon();
+
         _icon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = _brandIcon,
             Text = "PRIVON — 실행 중",
             ContextMenuStrip = _menu,
             Visible = false,
         };
+
+        // PRIVON 0.3.2 Gate 032-C2 -- the reconnect notification's click is the ONE authorized
+        // trigger for ChromeReconnectNotificationClicked; NotifyIcon.BalloonTipClicked is the real
+        // WinForms mechanism for that. No other NotifyIcon event is wired to it.
+        _icon.BalloonTipClicked += (_, _) => ChromeReconnectNotificationClicked?.Invoke(this, EventArgs.Empty);
     }
 
     public event EventHandler? ExitRequested;
     public event EventHandler? AutoStartToggleRequested;
     public event EventHandler? SettingsRequested;
+    public event EventHandler? ChromeReconnectNotificationClicked;
 
     public void Show()
     {
@@ -98,6 +111,15 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _autoStartItem.Checked = isChecked;
     }
 
+    // PRIVON 0.3.2 Gate 032-C2 -- non-technical copy only (section 8): never "Native Messaging",
+    // "registry", "manifest", "host", "Setup", or "Repair". ToolTipIcon.Info only -- never a warning/
+    // error icon, since this is routine guidance, not a fault.
+    public void ShowChromeReconnectNotification()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _icon.ShowBalloonTip(10000, "PRIVON", "Chrome connection needs updating. Open PRIVON to reconnect.", ToolTipIcon.Info);
+    }
+
     /// <summary>Deterministic disposal -- sets <c>Visible = false</c> BEFORE disposing so the icon
     /// is removed from the shell rather than left as a stale "ghost" entry (a well-known
     /// <see cref="NotifyIcon"/> pitfall when a process exits without doing this). Idempotent; safe
@@ -109,6 +131,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
 
         _icon.Visible = false;
         _icon.Dispose();
+        _brandIcon.Dispose();
         _menu.Dispose();
         _settingsItem.Dispose();
         _autoStartItem.Dispose();

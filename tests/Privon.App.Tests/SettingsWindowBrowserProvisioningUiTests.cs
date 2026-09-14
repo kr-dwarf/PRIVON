@@ -96,7 +96,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
+        Assert.Equal("Edge: unavailable", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
@@ -119,7 +119,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
+        Assert.Equal("Edge: unavailable", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
@@ -142,7 +142,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
+        Assert.Equal("Edge: unavailable", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
@@ -165,7 +165,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
+        Assert.Equal("Edge: unavailable", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
@@ -188,7 +188,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
+        Assert.Equal("Edge: unavailable", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }
@@ -214,7 +214,7 @@ public class SettingsWindowBrowserProvisioningUiTests
             }
         });
 
-        Assert.Equal("Edge: unavailable in 0.3.1", statusText);
+        Assert.Equal("Edge: unavailable", statusText);
         Assert.Equal(Visibility.Collapsed, setupVisibility);
         Assert.Equal(Visibility.Collapsed, repairVisibility);
     }

@@ -51,15 +51,28 @@ namespace Privon.App;
 /// registration coordinator), mirroring exactly how it already owns the ONE
 /// <see cref="WindowsAutoStartCoordinator"/>: supplied fully-constructed, never built internally
 /// (matching the auto-start precedent's own shape, since both wrap a narrow OS-mechanics seam this
-/// type itself never touches directly). REGISTRATION_STAYS_INERT (E5G.P2 commander contract, frozen,
-/// re-confirmed at Gate E5G.1C): neither this constructor nor <see cref="Start"/> nor
-/// <see cref="Dispose"/> ever calls <see cref="NativeMessagingHostRegistrationCoordinator.Inspect"/>/
-/// <c>Provision</c>/<c>Repair</c> -- provisioning stays unreachable from ordinary tray lifecycle. No
-/// tray button exists for it. Gate E5G.1C wires this SAME coordinator instance through, unchanged,
-/// to the ONE <see cref="SettingsCoordinator"/> this type also owns (see that type's own
-/// CHROME_PROVISIONING doc) -- the explicit Chrome Native Messaging setup/repair actions now live
-/// entirely behind Settings, never here and never a second independently-constructed coordinator
-/// instance.
+/// type itself never touches directly). Gate E5G.1C wires this SAME coordinator instance through,
+/// unchanged, to the ONE <see cref="SettingsCoordinator"/> this type also owns (see that type's own
+/// CHROME_PROVISIONING doc) -- the explicit Chrome Native Messaging setup/repair actions live
+/// entirely behind Settings, never a second independently-constructed coordinator instance.
+///
+/// PRIVON 0.3.2 Gate 032-C2 -- CONTRACT UPDATE (supersedes the former REGISTRATION_STAYS_INERT
+/// "zero interaction of any kind" contract): <see cref="Start"/> now performs exactly ONE contained,
+/// READ-ONLY Chrome readiness inspection (via <see cref="SettingsCoordinator.InspectChromeReadinessForStartup"/>
+/// -- never a second, independently-constructed coordinator/environment) as its own final step, and
+/// reacts with ZERO mutation of any kind: Fresh proactively opens/focuses the existing Settings
+/// surface once (friendly Connect Chrome onboarding, still requiring the user's own later explicit
+/// click to actually provision); OwnedNeedsRepair shows exactly one reconnect notification via
+/// <see cref="ITrayIconSurface.ShowChromeReconnectNotification"/>, whose click ONLY opens/focuses
+/// Settings (never Repair); every other state (Ready/ForeignBlocked/OrphanBlocked/Failed) does
+/// nothing. This entire onboarding branch is exception-contained
+/// (<see cref="RunChromeOnboardingCheck"/>) and can never prevent or roll back normal startup --
+/// unlike the tray-show/prompt-coordinator stages above, a failure here is swallowed, never
+/// rethrown. Edge is never inspected or mutated by this new path (Chrome-only, matching
+/// <see cref="SettingsCoordinator"/>'s own <see cref="ReleaseBrowserSupportPolicy"/> gating).
+/// Constructing this type still performs zero mutation, and neither this constructor nor
+/// <see cref="Dispose"/> reaches Provision/Repair -- only the new, contained, read-only Inspect call
+/// inside <see cref="Start"/> is new.
 /// </summary>
 internal sealed class PrivonAppUiBridge : IDisposable
 {
@@ -179,6 +192,7 @@ internal sealed class PrivonAppUiBridge : IDisposable
             _traySurface.ExitRequested += OnExitRequested;
             _traySurface.AutoStartToggleRequested += OnAutoStartToggleRequested;
             _traySurface.SettingsRequested += OnSettingsRequested;
+            _traySurface.ChromeReconnectNotificationClicked += OnChromeReconnectNotificationClicked;
             _traySurface.SetAutoStartChecked(_autoStartCoordinator.IsEnabled());
             _traySurface.Show();
         }
@@ -187,6 +201,54 @@ internal sealed class PrivonAppUiBridge : IDisposable
             RollbackPartialStart();
             throw;
         }
+
+        // Gate 032-C2: onboarding is non-essential and must never affect the STARTUP_ROLLBACK
+        // above -- deliberately OUTSIDE that try/catch, with its own total exception containment.
+        RunChromeOnboardingCheck();
+    }
+
+    // PRIVON 0.3.2 Gate 032-C2 -- the ONE contained, READ-ONLY Chrome readiness inspection Start()
+    // performs, exactly once per process. Reuses SettingsCoordinator's own policy-gated Chrome
+    // identity/readiness path (never a second, independently-constructed coordinator/environment).
+    // Exception-contained in full: any failure anywhere in this method (the inspection itself, the
+    // proactive Settings open, or the notification display) is swallowed -- onboarding must never
+    // prevent or roll back normal PRIVON startup, which has already fully succeeded by the time this
+    // runs.
+    private void RunChromeOnboardingCheck()
+    {
+        try
+        {
+            var readiness = _settingsCoordinator.InspectChromeReadinessForStartup();
+            switch (readiness)
+            {
+                case NativeMessagingRegistrationReadiness.Fresh:
+                    // Gate 032-C2R: feed the readiness THIS SAME call already obtained into the
+                    // surface's own first render -- never a second InspectChrome() (see
+                    // SettingsCoordinator.ShowRequestedForStartup's own EXACTLY_ONE_STARTUP_INSPECTION
+                    // doc). ShowRequested() remains untouched for every other caller.
+                    _settingsCoordinator.ShowRequestedForStartup(readiness);
+                    break;
+                case NativeMessagingRegistrationReadiness.OwnedNeedsRepair:
+                    _traySurface.ShowChromeReconnectNotification();
+                    break;
+            }
+        }
+        catch
+        {
+            // Onboarding is non-essential (Gate 032-C2 section 10) -- normal PRIVON startup has
+            // already succeeded above; the existing tray Settings menu entry remains available
+            // regardless of what happens here.
+        }
+    }
+
+    // Gate 032-C2: the ONLY authorized reaction to a reconnect-notification click is opening/
+    // focusing Settings -- never Repair, never any registry/manifest mutation. Routed through the
+    // SAME dispatcher scheduler as every other tray-originated event, for the same uniform-non-
+    // blocking reason. ONE_CURRENT_SETTINGS_WINDOW itself remains entirely SettingsCoordinator's own
+    // responsibility (mirrors OnSettingsRequested exactly).
+    private void OnChromeReconnectNotificationClicked(object? sender, EventArgs e)
+    {
+        _scheduler.Post(_settingsCoordinator.ShowRequested);
     }
 
     // STARTUP_ROLLBACK: each step independently swallowed (the ORIGINAL startup exception, not a
@@ -204,6 +266,7 @@ internal sealed class PrivonAppUiBridge : IDisposable
             _traySurface.ExitRequested -= OnExitRequested;
             _traySurface.AutoStartToggleRequested -= OnAutoStartToggleRequested;
             _traySurface.SettingsRequested -= OnSettingsRequested;
+            _traySurface.ChromeReconnectNotificationClicked -= OnChromeReconnectNotificationClicked;
             _traySurface.Dispose();
         });
     }
@@ -277,6 +340,7 @@ internal sealed class PrivonAppUiBridge : IDisposable
         _traySurface.ExitRequested -= OnExitRequested;
         _traySurface.AutoStartToggleRequested -= OnAutoStartToggleRequested;
         _traySurface.SettingsRequested -= OnSettingsRequested;
+        _traySurface.ChromeReconnectNotificationClicked -= OnChromeReconnectNotificationClicked;
         _traySurface.Dispose();
     }
 }

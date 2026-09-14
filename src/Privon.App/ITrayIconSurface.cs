@@ -35,6 +35,13 @@ internal interface ITrayIconSurface : IDisposable
     /// (ONE_CURRENT_SETTINGS_WINDOW).</summary>
     event EventHandler? SettingsRequested;
 
+    /// <summary>PRIVON 0.3.2 Gate 032-C2 -- raised when the user clicks the Chrome reconnect
+    /// notification <see cref="ShowChromeReconnectNotification"/> displayed. Carries no state of its
+    /// own; the ONLY authorized reaction is opening/focusing the existing Settings surface -- never
+    /// Repair, never any registry/manifest mutation. <see cref="PrivonAppUiBridge"/> is the sole
+    /// owner of what this actually does.</summary>
+    event EventHandler? ChromeReconnectNotificationClicked;
+
     /// <summary>Makes the tray icon visible. A neutral tooltip only (e.g. "PRIVON — 실행 중") --
     /// never "보호 중"/"보호 완료"/"검증됨" or any other claim this codebase's frozen
     /// <c>ProtectionState</c> boundary does not support yet.</summary>
@@ -45,4 +52,12 @@ internal interface ITrayIconSurface : IDisposable
     /// every enable/disable attempt, success or failure) -- this method itself performs no
     /// verification of its own, it only renders whatever state it is given.</summary>
     void SetAutoStartChecked(bool isChecked);
+
+    /// <summary>PRIVON 0.3.2 Gate 032-C2 -- displays exactly one informational, non-technical
+    /// notification telling the user their Chrome connection needs updating. Never itself mutates
+    /// anything; the caller decides whether/when to show it (at most once per process, per the
+    /// COMMANDER_CONTRACT this gate adds) -- this method has no de-duplication of its own. The OS
+    /// may suppress the visible balloon (e.g. Focus Assist) -- that is acceptable, since the
+    /// existing tray Settings menu item remains a working fallback regardless.</summary>
+    void ShowChromeReconnectNotification();
 }

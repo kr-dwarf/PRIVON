@@ -45,9 +45,24 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
     /// or <see langword="null"/> if it was never called.</summary>
     public bool? CurrentAutoStartChecked => AutoStartCheckedHistory.Count > 0 ? AutoStartCheckedHistory[^1] : null;
 
+    /// <summary>Gate 032-C2 -- number of times <see cref="ShowChromeReconnectNotification"/> was
+    /// called, so a test can prove the reconnect notification fires AT MOST ONCE per process rather
+    /// than merely asserting it fired at all.</summary>
+    public int ShowChromeReconnectNotificationCallCount { get; private set; }
+
+    /// <summary>Gate 032-C2 -- same reasoning as <see cref="ExitRequestedSubscriberCount"/>, for the
+    /// new reconnect-notification click event.</summary>
+    public int ChromeReconnectNotificationClickedSubscriberCount { get; private set; }
+
+    /// <summary>Gate 032-C2 -- when set, <see cref="ShowChromeReconnectNotification"/> throws this
+    /// instead of incrementing its own call count, letting a test prove the onboarding/notification
+    /// branch is exception-contained and never prevents normal startup.</summary>
+    public Exception? ThrowOnShowChromeReconnectNotification { get; set; }
+
     private EventHandler? _exitRequested;
     private EventHandler? _autoStartToggleRequested;
     private EventHandler? _settingsRequested;
+    private EventHandler? _chromeReconnectNotificationClicked;
 
     public event EventHandler? ExitRequested
     {
@@ -67,6 +82,12 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
         remove { _settingsRequested -= value; SettingsRequestedSubscriberCount--; }
     }
 
+    public event EventHandler? ChromeReconnectNotificationClicked
+    {
+        add { _chromeReconnectNotificationClicked += value; ChromeReconnectNotificationClickedSubscriberCount++; }
+        remove { _chromeReconnectNotificationClicked -= value; ChromeReconnectNotificationClickedSubscriberCount--; }
+    }
+
     public void Show()
     {
         if (ThrowOnShow is { } ex) throw ex;
@@ -74,6 +95,13 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
     }
 
     public void SetAutoStartChecked(bool isChecked) => AutoStartCheckedHistory.Add(isChecked);
+
+    /// <summary>Gate 032-C2 -- mirrors <see cref="Show"/>'s own ThrowOnShow pattern.</summary>
+    public void ShowChromeReconnectNotification()
+    {
+        if (ThrowOnShowChromeReconnectNotification is { } ex) throw ex;
+        ShowChromeReconnectNotificationCallCount++;
+    }
 
     /// <summary>Simulates the user choosing the tray's Exit command.</summary>
     public void RaiseExitRequested() => _exitRequested?.Invoke(this, EventArgs.Empty);
@@ -83,6 +111,9 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
 
     /// <summary>Simulates the user choosing the tray's "Settings..." command.</summary>
     public void RaiseSettingsRequested() => _settingsRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Simulates the user clicking the Chrome reconnect notification.</summary>
+    public void RaiseChromeReconnectNotificationClicked() => _chromeReconnectNotificationClicked?.Invoke(this, EventArgs.Empty);
 
     public void Dispose()
     {

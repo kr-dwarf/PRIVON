@@ -6,8 +6,8 @@ namespace Privon.App;
 /// verified raw Store Item ID, plus the mechanically-derived Native Messaging origin
 /// (<see cref="NativeMessagingOrigin"/>) that formula produces. Deliberately narrow -- no listing
 /// metadata, no version/account/dashboard state, no general Store abstraction of any kind. This is
-/// NOT the Web authorization allowlist (<see cref="WebExtensionOriginAllowlist.Production"/>, which
-/// stays empty through this gate) -- it is only the identity a caller (Settings, via
+/// NOT the Web authorization allowlist (<see cref="WebExtensionOriginAllowlist.Production"/>) -- it
+/// is only the Store identity a caller (Settings, via
 /// <see cref="SettingsCoordinator"/>) supplies to the already-frozen
 /// <see cref="NativeMessagingHostRegistrationCoordinator"/> for Chrome Native Messaging host
 /// registration.

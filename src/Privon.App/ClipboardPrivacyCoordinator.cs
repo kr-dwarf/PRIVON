@@ -265,10 +265,9 @@ internal sealed class ClipboardPrivacyCoordinator : IDisposable
         // real fixed 250ms interval. A test injects FakeClipboardRetryDelay to drive the retry loop
         // in ProcessWorkItemAsync deterministically instead.
         _retryDelay = retryDelay ?? new ClipboardRetryDelay();
-        // Gate 031F5C -- optional, trailing, PRODUCTION_DEFAULT null: every real 0.3.1 launch before
-        // Phase E ships a concrete IWebClipboardAuthorizationSource passes nothing here, so every
-        // non-Windows target fails closed to ClipboardAuthorization.Outside (see
-        // ClipboardAuthorizationRouter's own PRODUCTION_DEFAULT doc). No production trusted fake.
+        // Gate 031F5C -- optional, trailing and fail-closed when omitted. Production supplies the
+        // concrete IWebClipboardAuthorizationSource; other callers may omit it without gaining a
+        // trusted fallback (see ClipboardAuthorizationRouter).
         _webAuthorizationSource = webAuthorizationSource;
         _workerStopTimeout = stopTimeoutOverride ?? WorkerStopTimeoutContractDefault;
 

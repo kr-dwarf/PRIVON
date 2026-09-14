@@ -14,10 +14,9 @@ namespace Privon.App;
 /// stays a thin wrapper around it -- a Web server startup OR teardown failure here must never prevent
 /// or unwind Windows clipboard protection (Gate 031F6I.1 B2).
 ///
-/// Production admission budget capacity is exactly 8 (Gate 031F6H B3/section 6). Production
-/// <see cref="WebExtensionOriginAllowlist.Production"/> stays empty -- this type creates transport/
-/// session capability only (Gate 031F6H section 50), never Web clipboard authorization POLICY of any
-/// kind.
+/// Production admission budget capacity is exactly 8 (Gate 031F6H B3/section 6). This type creates
+/// transport/session capability only (Gate 031F6H section 50); the exact extension-origin allowlist
+/// and Web clipboard authorization policy remain outside this type.
 ///
 /// SHARED_CHANNEL_TRUTH (Gate E5F): <see cref="StartOrNull(WebChannelRegistry, WebChannelManager)"/>
 /// now takes the registry/manager as parameters rather than constructing its own private pair -- so
