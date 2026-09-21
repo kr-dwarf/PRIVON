@@ -149,7 +149,7 @@ public class SettingsProcessorIntegrationTests : IDisposable
         const string phone = "010-1234-5678";
         var candidate = Assert.Single(DetectionPipeline.CreateDefault().Detect(phone).Candidates);
 
-        f.ExceptionService.Add(candidate.PiiType, candidate.Canonical);
+        f.ExceptionService.Add(candidate.PiiType, CanonicalAssert.Present(candidate));
         var outcome = f.Processor.Process(ChatGpt, Snapshot(phone));
 
         Assert.Equal(1, outcome.Result.BypassCount);
@@ -167,7 +167,7 @@ public class SettingsProcessorIntegrationTests : IDisposable
         const string email = "user@example.test";
         var candidate = Assert.Single(DetectionPipeline.CreateDefault().Detect(email).Candidates);
 
-        f.ExceptionService.Add(candidate.PiiType, candidate.Canonical);
+        f.ExceptionService.Add(candidate.PiiType, CanonicalAssert.Present(candidate));
         var outcome = f.Processor.Process(ChatGpt, Snapshot(email));
 
         Assert.Equal(1, outcome.Result.BypassCount);
@@ -183,7 +183,7 @@ public class SettingsProcessorIntegrationTests : IDisposable
         const string exceptedPhone = "010-1234-5678";
         const string otherPhone = "010-9999-0000";
         var candidate = Assert.Single(DetectionPipeline.CreateDefault().Detect(exceptedPhone).Candidates);
-        f.ExceptionService.Add(candidate.PiiType, candidate.Canonical);
+        f.ExceptionService.Add(candidate.PiiType, CanonicalAssert.Present(candidate));
 
         var outcome = f.Processor.Process(ChatGpt, Snapshot($"{exceptedPhone} {otherPhone}"));
 
@@ -203,10 +203,10 @@ public class SettingsProcessorIntegrationTests : IDisposable
         var f = CreateFixture();
         const string phone = "010-1234-5678";
         var candidate = Assert.Single(DetectionPipeline.CreateDefault().Detect(phone).Candidates);
-        f.ExceptionService.Add(candidate.PiiType, candidate.Canonical);
+        f.ExceptionService.Add(candidate.PiiType, CanonicalAssert.Present(candidate));
         f.Processor.Process(ChatGpt, Snapshot(phone)); // confirm bypassed first
 
-        f.ExceptionService.Delete(candidate.PiiType, candidate.Canonical);
+        f.ExceptionService.Delete(candidate.PiiType, CanonicalAssert.Present(candidate));
         var outcome = f.Processor.Process(ChatGpt, Snapshot(phone));
 
         Assert.Equal(1, outcome.Result.ProtectCount);
@@ -225,8 +225,8 @@ public class SettingsProcessorIntegrationTests : IDisposable
         const string email = "user@example.test";
         var phoneCandidate = Assert.Single(DetectionPipeline.CreateDefault().Detect(phone).Candidates);
         var emailCandidate = Assert.Single(DetectionPipeline.CreateDefault().Detect(email).Candidates);
-        f.ExceptionService.Add(phoneCandidate.PiiType, phoneCandidate.Canonical);
-        f.ExceptionService.Add(emailCandidate.PiiType, emailCandidate.Canonical);
+        f.ExceptionService.Add(phoneCandidate.PiiType, CanonicalAssert.Present(phoneCandidate));
+        f.ExceptionService.Add(emailCandidate.PiiType, CanonicalAssert.Present(emailCandidate));
 
         f.ExceptionService.Reset();
         var outcome = f.Processor.Process(ChatGpt, Snapshot($"{phone} {email}"));

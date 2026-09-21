@@ -70,9 +70,15 @@ internal static class UserExceptionPolicyEvaluator
             return decision;
 
         var candidate = decision.Candidate.Candidate;
+
+        // D3B0-A A.9 §7.2 site 5 -- explicit PRESENT check before equality. An ABSENT canonical
+        // can never match a stored user exception, so it can never be bypassed into the clear.
+        if (candidate.Canonical is not { } candidateCanonical)
+            return decision;
+
         foreach (var exception in exceptions)
         {
-            if (exception.PiiType == candidate.PiiType && exception.CanonicalValue == candidate.Canonical)
+            if (exception.PiiType == candidate.PiiType && exception.CanonicalValue == candidateCanonical)
                 return decision with { Disposition = CandidateDisposition.Bypass };
         }
 

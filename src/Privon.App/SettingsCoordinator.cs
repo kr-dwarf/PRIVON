@@ -274,7 +274,10 @@ internal sealed class SettingsCoordinator : IDisposable
             return;
         }
 
-        HandleMutation(surface, () => _exceptionService.Add(candidate.PiiType, candidate.Canonical));
+        // D3B0-A A.9 §7.2 site 4 -- explicit PRESENT check before Add, which takes a
+        // non-nullable CanonicalValue. An ABSENT canonical is never persisted as an exception.
+        if (candidate.Canonical is not { } canonicalToAdd) return;
+        HandleMutation(surface, () => _exceptionService.Add(candidate.PiiType, canonicalToAdd));
     }
 
     // PRIVON v0.2.1 Gate 3C DEGRADED_STORAGE_STATUS_CORRECTION: StatusMessage carries ONLY the

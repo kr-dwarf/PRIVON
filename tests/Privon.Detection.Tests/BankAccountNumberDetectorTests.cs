@@ -111,7 +111,7 @@ public class BankAccountNumberDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(fullwidthAccount, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("123456789012", results[0].Canonical.Value);
+        Assert.Equal("123456789012", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 11. exact RawSpan restoration ----
@@ -131,9 +131,9 @@ public class BankAccountNumberDetectorTests
     [Fact]
     public void DifferentFormatting_SameCanonicalValue()
     {
-        var hyphen = Detect("계좌번호 123-456-789012")[0].Canonical;
-        var space = Detect("계좌번호 123 456 789012")[0].Canonical;
-        var none = Detect("계좌번호 123456789012")[0].Canonical;
+        var hyphen = CanonicalAssert.Present(Detect("계좌번호 123-456-789012")[0]);
+        var space = CanonicalAssert.Present(Detect("계좌번호 123 456 789012")[0]);
+        var none = CanonicalAssert.Present(Detect("계좌번호 123456789012")[0]);
 
         Assert.Equal(hyphen, space);
         Assert.Equal(space, none);
@@ -164,7 +164,7 @@ public class BankAccountNumberDetectorTests
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level3, results[0].RiskLevel);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal("123***789012", results[0].Canonical.Value);
+        Assert.Equal("123***789012", CanonicalAssert.Text(results[0]));
     }
 
     [Fact]

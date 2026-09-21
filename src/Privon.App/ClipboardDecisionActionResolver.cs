@@ -354,7 +354,12 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             {
                 if (assignment.Decision.Disposition != CandidateDisposition.NeedsDecision) continue;
                 var candidate = assignment.Decision.Candidate.Candidate;
-                currentNeedsDecisionItems.Add(new ClipboardDecisionItem(candidate.Canonical, candidate.RiskLevel));
+                // D3B0-A A.9 §7.2 site 1 -- explicit PRESENT check before constructing a
+                // ClipboardDecisionItem, whose own Canonical stays NON-nullable. ABSENT is
+                // skipped rather than coerced: fail-closed means no decision item is fabricated
+                // for a candidate that carries no canonical value.
+                if (candidate.Canonical is { } needsDecisionCanonical)
+                    currentNeedsDecisionItems.Add(new ClipboardDecisionItem(needsDecisionCanonical, candidate.RiskLevel));
             }
         }
 
@@ -388,7 +393,9 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             }
 
             var candidate = decision.Candidate.Candidate;
-            var item = new ClipboardDecisionItem(candidate.Canonical, candidate.RiskLevel);
+            // §7.2 site 2 -- same explicit PRESENT check as site 1.
+            if (candidate.Canonical is not { } itemCanonical) continue;
+            var item = new ClipboardDecisionItem(itemCanonical, candidate.RiskLevel);
             var overlaidDisposition = scope.GetChoice(item) switch
             {
                 ClipboardRuntimeItemChoice.Protect => CandidateDisposition.Protect,

@@ -121,7 +121,7 @@ public class CardNumberDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(fullwidthCard, rawText.Substring(span.Start, span.Length));
-        Assert.Equal(ValidCard16, results[0].Canonical.Value);
+        Assert.Equal(ValidCard16, CanonicalAssert.Text(results[0]));
     }
 
     // ---- 8. exact RawSpan restoration ----
@@ -141,9 +141,9 @@ public class CardNumberDetectorTests
     [Fact]
     public void DifferentFormatting_SameCanonicalValue()
     {
-        var hyphen = Detect($"카드번호 {Hyphenated(ValidCard16)}")[0].Canonical;
-        var space = Detect($"카드번호 {Spaced(ValidCard16)}")[0].Canonical;
-        var none = Detect($"카드번호 {ValidCard16}")[0].Canonical;
+        var hyphen = CanonicalAssert.Present(Detect($"카드번호 {Hyphenated(ValidCard16)}")[0]);
+        var space = CanonicalAssert.Present(Detect($"카드번호 {Spaced(ValidCard16)}")[0]);
+        var none = CanonicalAssert.Present(Detect($"카드번호 {ValidCard16}")[0]);
 
         Assert.Equal(hyphen, space);
         Assert.Equal(space, none);
@@ -188,7 +188,7 @@ public class CardNumberDetectorTests
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level3, results[0].RiskLevel);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal(masked.Replace("-", ""), results[0].Canonical.Value);
+        Assert.Equal(masked.Replace("-", ""), CanonicalAssert.Text(results[0]));
     }
 
     // ---- 14. generic masked strings not auto-detected ----

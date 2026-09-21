@@ -47,7 +47,7 @@ public class Gate031F5B_PhaseDResolverWebRedTests
         var candidate = Assert.Single(probe.Candidates);
         Assert.Equal(expectedType, candidate.PiiType);
         Assert.Equal(expectedLevel, candidate.RiskLevel);
-        return candidate.Canonical;
+        return CanonicalAssert.Present(candidate);
     }
 
     private static ClipboardDecisionItem MakeLevel3Item(string text = Level3Text) =>

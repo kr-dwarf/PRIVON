@@ -104,7 +104,13 @@ public static class ExceptionTrustedEvaluator
             // TYPED_VALUE_PIITYPE_INVARIANT, step 2: both checks are written out explicitly --
             // neither side is inferred from the other, even though CanonicalValue's own
             // structural equality already implies the PiiType comparison.
-            if (candidate.PiiType == outerType && candidate.Canonical == canonical) return true;
+            // D3B0-A A.9 §7.2 site 8 -- explicit PRESENT check. Candidate.Canonical is now
+            // CanonicalValue?, so `== canonical` would still compile via the LIFTED operator and
+            // would already evaluate false when ABSENT. The check is written out anyway rather
+            // than left to that subtlety (NULLABLE_VALUE_SHADOWING): an ABSENT canonical must
+            // NEVER match a stored trusted/exception entry.
+            if (candidate.Canonical is not { } candidateCanonical) continue;
+            if (candidate.PiiType == outerType && candidateCanonical == canonical) return true;
         }
 
         return false;

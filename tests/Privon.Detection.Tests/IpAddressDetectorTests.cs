@@ -24,7 +24,7 @@ public class IpAddressDetectorTests
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level2, results[0].RiskLevel);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal("203.0.113.42", results[0].Canonical.Value);
+        Assert.Equal("203.0.113.42", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 2. 0/255 boundary ----
@@ -110,7 +110,7 @@ public class IpAddressDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(ip, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("203.0.113.42", results[0].Canonical.Value);
+        Assert.Equal("203.0.113.42", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 9. IPv4 canonicalization round-trips ----
@@ -119,7 +119,7 @@ public class IpAddressDetectorTests
     {
         var results = Detect("192.0.2.1");
         Assert.Single(results);
-        Assert.Equal("192.0.2.1", results[0].Canonical.Value);
+        Assert.Equal("192.0.2.1", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 10. full IPv6 ----
@@ -152,8 +152,8 @@ public class IpAddressDetectorTests
     [Fact]
     public void Ipv6LeadingZeroVariants_SameCanonicalValue()
     {
-        var withLeadingZeros = Detect("2001:0db8::0001")[0].Canonical;
-        var compact = Detect("2001:db8::1")[0].Canonical;
+        var withLeadingZeros = CanonicalAssert.Present(Detect("2001:0db8::0001")[0]);
+        var compact = CanonicalAssert.Present(Detect("2001:db8::1")[0]);
 
         Assert.Equal(compact, withLeadingZeros);
     }
@@ -161,8 +161,8 @@ public class IpAddressDetectorTests
     [Fact]
     public void FullAndCompressedIpv6_SameCanonicalValue()
     {
-        var full = Detect("2001:0db8:0000:0000:0000:ff00:0042:8329")[0].Canonical;
-        var compressed = Detect("2001:db8::ff00:42:8329")[0].Canonical;
+        var full = CanonicalAssert.Present(Detect("2001:0db8:0000:0000:0000:ff00:0042:8329")[0]);
+        var compressed = CanonicalAssert.Present(Detect("2001:db8::ff00:42:8329")[0]);
 
         Assert.Equal(compressed, full);
     }
@@ -309,7 +309,7 @@ public class IpAddressDetectorTests
         Assert.Single(cardResults);
         Assert.Single(accountResults);
         Assert.Single(ipResults);
-        Assert.Equal("203.0.113.42", ipResults[0].Canonical.Value);
+        Assert.Equal("203.0.113.42", CanonicalAssert.Text(ipResults[0]));
 
         var allSpans = new[]
         {
@@ -349,7 +349,7 @@ public class IpAddressDetectorTests
     {
         var results = Detect(text);
         Assert.Single(results);
-        Assert.Equal("192.0.2.1", results[0].Canonical.Value);
+        Assert.Equal("192.0.2.1", CanonicalAssert.Text(results[0]));
         var span = results[0].Span;
         Assert.Equal("192.0.2.1", text.Substring(span.Start, span.Length));
     }

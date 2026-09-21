@@ -25,9 +25,19 @@ public class ClipboardPrivacyProcessorUserExceptionTests
             new FakeProtectionCategorySettingsProvider(categories ?? ProtectionCategorySettings.AllOn),
             new FakeUserExceptionProvider(exceptions));
 
+    // D3B0-A A.9 §7.2 -- DetectionCandidate.Canonical widened to CanonicalValue?.
+    //
+    // CONTRACT_IMPLEMENTATION_GAP: PROPERTY_PATTERN_CANONICAL_READ. This site reads Canonical
+    // through a PROPERTY PATTERN, so the lexical `\.Canonical` scan the accepted migration map
+    // (§24.3) is built on cannot see it -- this file carries ZERO `.Canonical` tokens and is not
+    // among the accepted 23. The counts in §24.3 are exact for the pattern the contract defined;
+    // their COVERAGE is short by this one file. Reported, not silently absorbed.
+    //
+    // CanonicalAssert.Present asserts PRESENT rather than null-forgiving, so an ABSENT canonical
+    // fails loudly instead of letting the fixture continue with a default value (§24.3 B.5).
     private static CanonicalValue DiscoverCanonical(string rawText, PiiType expectedType) =>
-        Assert.Single(DetectionPipeline.CreateDefault().Detect(rawText).Candidates) is { PiiType: var t, Canonical: var c } && t == expectedType
-            ? c
+        Assert.Single(DetectionPipeline.CreateDefault().Detect(rawText).Candidates) is { PiiType: var t } candidate && t == expectedType
+            ? CanonicalAssert.Present(candidate)
             : throw new InvalidOperationException("fixture did not produce the expected single candidate");
 
     // ==================================================================

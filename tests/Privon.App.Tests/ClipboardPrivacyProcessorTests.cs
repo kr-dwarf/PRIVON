@@ -45,6 +45,16 @@ public class ClipboardPrivacyProcessorTests
     {
         public string Name => "ThrowingDetector";
         public PiiType PiiType => PiiType.Secret;
+        // D3B0-A A.9 §6 -- the three new abstract IDetector members. Synthetic identity:
+        // NOT one of the nine frozen D2.2 contract IDs, and a rank outside the frozen
+        // 10..360 band so it can never collide with a registered detector. Ready, because
+        // this double is a pipeline INPUT and is never registered in a DetectorRegistry.
+        public DetectorId Id { get; } = DetectorId.Create("test.app_processor_throwing");
+
+        public int ResolutionRank => 900002;
+
+        public DetectorReadinessState Readiness => DetectorReadinessState.Ready;
+
         public IReadOnlyList<DetectionCandidate> Detect(DetectionContext context) =>
             throw new InvalidOperationException("synthetic detector failure for ClipboardPrivacyProcessor test");
     }
@@ -62,7 +72,7 @@ public class ClipboardPrivacyProcessorTests
         Assert.Equal(expectedType, candidate.PiiType);
         Assert.Equal(expectedLevel, candidate.RiskLevel);
         if (expectedConfidence is { } conf) Assert.Equal(conf, candidate.Confidence);
-        return candidate.Canonical;
+        return CanonicalAssert.Present(candidate);
     }
 
     // ==================================================================

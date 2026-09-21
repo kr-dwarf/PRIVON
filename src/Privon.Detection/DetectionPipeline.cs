@@ -32,6 +32,26 @@ public sealed class DetectionPipeline
     }
 
     /// <summary>
+    /// D3B0-A A.9 §16.6 -- the added registry constructor. The existing list constructor above
+    /// and <see cref="CreateDefault"/> are retained VERBATIM.
+    ///
+    /// Detectors are taken in the registry's own rank-ascending order (§16.4). That order is an
+    /// execution detail only and is NEVER a resolver tiebreaker: this pipeline still pre-sorts by
+    /// the candidates' own data before resolution, so registration order cannot leak into any
+    /// result (FORBIDDEN_HIDDEN_TIEBREAKERS, §9.2).
+    ///
+    /// NO_DETECTOR_ACTIVATION_BY_BRIDGE: constructing a registry activates nothing. A detector
+    /// runs only because a caller put a real implementation into it.
+    /// </summary>
+    public DetectionPipeline(DetectorRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        var detectors = new List<IDetector>(registry.All.Count);
+        foreach (var registration in registry.All) detectors.Add(registration.Detector);
+        _detectors = detectors;
+    }
+
+    /// <summary>
     /// The 9 detectors implemented through Phase 2M/2O, in no policy-significant order (see
     /// class doc). BankAccountNumberDetector's own internal Phone/RRN/CardNumber guard (Phase
     /// 2E) is left exactly as it is -- see BANK_ACCOUNT_DIRECT_GUARD_DEBT in the Phase 2P

@@ -78,7 +78,7 @@ public class ResidentRegistrationNumberDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(fullwidthRrn, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("9001011234568", results[0].Canonical.Value);
+        Assert.Equal("9001011234568", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 6. exact RawSpan restoration ----
@@ -97,9 +97,9 @@ public class ResidentRegistrationNumberDetectorTests
     [Fact]
     public void DifferentFormatting_SameCanonicalValue()
     {
-        var hyphen = Detect("900101-1234568")[0].Canonical;
-        var noHyphen = Detect("9001011234568")[0].Canonical;
-        var spaced = Detect("900101 1234568")[0].Canonical;
+        var hyphen = CanonicalAssert.Present(Detect("900101-1234568")[0]);
+        var noHyphen = CanonicalAssert.Present(Detect("9001011234568")[0]);
+        var spaced = CanonicalAssert.Present(Detect("900101 1234568")[0]);
 
         Assert.Equal(hyphen, noHyphen);
         Assert.Equal(noHyphen, spaced);

@@ -217,7 +217,10 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
             if (assignment.Decision.Disposition != CandidateDisposition.NeedsDecision) continue;
 
             var candidate = assignment.Decision.Candidate.Candidate;
-            var item = new ClipboardDecisionItem(candidate.Canonical, candidate.RiskLevel);
+            // D3B0-A A.9 §7.2 site 3 -- explicit PRESENT check; ClipboardDecisionItem.Canonical
+            // stays non-nullable, so an ABSENT candidate yields no decision item.
+            if (candidate.Canonical is not { } itemCanonical) continue;
+            var item = new ClipboardDecisionItem(itemCanonical, candidate.RiskLevel);
             if (seen.Add(item))
             {
                 items.Add(item);

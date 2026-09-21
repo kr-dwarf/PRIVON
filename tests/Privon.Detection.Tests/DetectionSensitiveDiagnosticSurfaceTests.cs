@@ -282,7 +282,7 @@ public class DetectionSensitiveDiagnosticSurfaceTests
         [
             detection.ToString(),
             detection.Candidates[0].ToString(),
-            detection.Candidates[0].Canonical.ToString(),
+            CanonicalAssert.Present(detection.Candidates[0]).ToString(),
             evaluated[0].ToString(),
             decisions[0].ToString(),
             assignments[0].ToString(),

@@ -38,15 +38,24 @@ public static class AliasAssigner
 
         foreach (var decision in protectInRawAppearanceOrder)
         {
-            aliasMap.GetOrAdd(decision.Candidate.Candidate.Canonical);
+            // D3B0-A A.9 §7.2 site 6 -- explicit PRESENT check. DetectionCandidate.Canonical is
+            // now CanonicalValue?; ABSENT registers no alias rather than inventing one. Every
+            // legacy detector emits a PRESENT canonical, so behaviour here is unchanged and the
+            // 672 Detection tests are the gate. Never substitute a value for ABSENT.
+            if (decision.Candidate.Candidate.Canonical is { } canonical)
+                aliasMap.GetOrAdd(canonical);
         }
 
         var results = new List<AliasAssignment>(decisions.Count);
         foreach (var decision in decisions)
         {
-            AliasToken? alias = decision.Disposition == CandidateDisposition.Protect
-                ? aliasMap.GetOrAdd(decision.Candidate.Candidate.Canonical)
-                : null;
+            // §7.2 site 7 -- explicit PRESENT check; ABSENT yields a null alias, exactly as a
+            // non-Protect disposition does. No sentinel, no placeholder token.
+            AliasToken? alias =
+                decision.Disposition == CandidateDisposition.Protect
+                && decision.Candidate.Candidate.Canonical is { } assignedCanonical
+                    ? aliasMap.GetOrAdd(assignedCanonical)
+                    : null;
             results.Add(new AliasAssignment(decision, alias));
         }
 
