@@ -21,10 +21,16 @@ namespace Privon.App;
 /// SOURCE_OF_TRUTH / RENDER_ONLY: this window holds only transient display state -- every value it
 /// shows comes from the most recent <see cref="RenderState"/> call, driven entirely by
 /// <see cref="SettingsCoordinator"/>. SUPPRESS_PROGRAMMATIC_REENTRY: setting a toggle's
-/// <c>IsChecked</c> from <see cref="RenderState"/> would otherwise re-fire that toggle's own Click
+/// <c>IsChecked</c> from <see cref="RenderState"/> would otherwise re-fire that toggle's own Checked/Unchecked
 /// handler (a standard WPF <c>ToggleButton</c> behavior) and re-raise
 /// <see cref="PhoneToggleRequested"/>/<see cref="EmailToggleRequested"/> for a state the user never
 /// actually requested -- <see cref="_suppressToggleEvents"/> guards against that.
+///
+/// TOGGLE_INPUT_PATHS: the three checkboxes (Phone, Email, United States) raise their request from the
+/// control's Checked/Unchecked change -- the one thing the mouse, the space key AND the UI Automation Toggle
+/// pattern (what a screen reader uses, which never raises Click) all do to the control. A change made by
+/// anything other than <see cref="RenderState"/> is therefore a request; that it came through an input path of
+/// the control is a property of this surface, not proof of a person's intent.
 ///
 /// DEGRADED_STORAGE_STATUS_CORRECTION (PRIVON v0.2.1 Gate 3C audit correction): the degraded-
 /// storage explanation (<see cref="SettingsViewState.MasterKeyUnavailable"/>) and a transient
@@ -65,6 +71,14 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
     private readonly System.Windows.Controls.Button _deleteSelectedButton;
     private readonly System.Windows.Controls.Button _resetExceptionsButton;
     private readonly System.Windows.Controls.Button _resetProtectionScopeButton;
+
+    // PRIVON 0.4.0 T-1 -- the United States ON/OFF control. The whole section is collapsed unless the rendered state carries a
+    // UnitedStatesChoice (only an explicit internal opt-in does), so a shipped window shows exactly what it always did. Its event is raised from
+    // the control's Checked/Unchecked change (mouse, space key and the UI Automation Toggle pattern all change it) and never while RenderState
+    // is writing the control (_suppressToggleEvents).
+    private readonly TextBlock _countryHeader;
+    private readonly System.Windows.Controls.CheckBox _unitedStatesToggle;
+    private readonly TextBlock _unitedStatesNote;
 
     // PRIVON 0.3.1 Gate E5G.1C -- the minimum functional Chrome Native Messaging setup surface.
     // _chromeStatusText always reflects the most recent SettingsViewState.ChromeNativeMessagingReadiness
@@ -138,11 +152,27 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         var scopeHeader = new TextBlock { Text = "Protection Scope", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
         _phoneToggle = new System.Windows.Controls.CheckBox { Content = "Phone", Margin = new Thickness(16, 2, 16, 2) };
         _emailToggle = new System.Windows.Controls.CheckBox { Content = "Email", Margin = new Thickness(16, 2, 16, 2) };
-        _phoneToggle.Click += (_, _) => { if (!_suppressToggleEvents) PhoneToggleRequested?.Invoke(this, _phoneToggle.IsChecked == true); };
-        _emailToggle.Click += (_, _) => { if (!_suppressToggleEvents) EmailToggleRequested?.Invoke(this, _emailToggle.IsChecked == true); };
+        RoutedEventHandler phoneChanged = (_, _) => { if (!_suppressToggleEvents) PhoneToggleRequested?.Invoke(this, _phoneToggle.IsChecked == true); };
+        RoutedEventHandler emailChanged = (_, _) => { if (!_suppressToggleEvents) EmailToggleRequested?.Invoke(this, _emailToggle.IsChecked == true); };
+        _phoneToggle.Checked += phoneChanged;
+        _phoneToggle.Unchecked += phoneChanged;
+        _emailToggle.Checked += emailChanged;
+        _emailToggle.Unchecked += emailChanged;
+
+        _countryHeader = new TextBlock { Text = "Country Scope", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4), Visibility = Visibility.Collapsed };
+        _unitedStatesToggle = new System.Windows.Controls.CheckBox
+        {
+            Content = "United States personal information detection",
+            Margin = new Thickness(16, 2, 16, 2),
+            Visibility = Visibility.Collapsed,
+        };
+        RoutedEventHandler unitedStatesChanged = (_, _) => { if (!_suppressToggleEvents) UnitedStatesToggleRequested?.Invoke(this, _unitedStatesToggle.IsChecked == true); };
+        _unitedStatesToggle.Checked += unitedStatesChanged;
+        _unitedStatesToggle.Unchecked += unitedStatesChanged;
+        _unitedStatesNote = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 4), Visibility = Visibility.Collapsed };
 
         _resetProtectionScopeButton = new System.Windows.Controls.Button { Content = "Reset protection scope", Margin = new Thickness(16, 4, 16, 8), HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
-        _resetProtectionScopeButton.Click += (_, _) => ConfirmThenRaise("보호 범위를 기본값으로 초기화하시겠습니까?", () => ResetProtectionScopeRequested?.Invoke(this, EventArgs.Empty));
+        _resetProtectionScopeButton.Click += (_, _) => ConfirmThenRaise("Reset the protection scope to its defaults?", () => ResetProtectionScopeRequested?.Invoke(this, EventArgs.Empty));
 
         var exceptionsHeader = new TextBlock { Text = "User Exceptions", FontWeight = FontWeights.Bold, Margin = new Thickness(16, 8, 16, 4) };
 
@@ -162,7 +192,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         _deleteSelectedButton = new System.Windows.Controls.Button { Content = "Delete selected", Margin = new Thickness(0, 0, 8, 0) };
         _deleteSelectedButton.Click += (_, _) => RaiseDeleteSelected();
         _resetExceptionsButton = new System.Windows.Controls.Button { Content = "Reset exceptions" };
-        _resetExceptionsButton.Click += (_, _) => ConfirmThenRaise("등록된 예외를 모두 초기화하시겠습니까?", () => ResetExceptionsRequested?.Invoke(this, EventArgs.Empty));
+        _resetExceptionsButton.Click += (_, _) => ConfirmThenRaise("Reset all registered exceptions?", () => ResetExceptionsRequested?.Invoke(this, EventArgs.Empty));
         listButtons.Children.Add(_deleteSelectedButton);
         listButtons.Children.Add(_resetExceptionsButton);
 
@@ -192,6 +222,9 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         panel.Children.Add(_phoneToggle);
         panel.Children.Add(_emailToggle);
         panel.Children.Add(_resetProtectionScopeButton);
+        panel.Children.Add(_countryHeader);
+        panel.Children.Add(_unitedStatesToggle);
+        panel.Children.Add(_unitedStatesNote);
         panel.Children.Add(exceptionsHeader);
         panel.Children.Add(typePanel);
         panel.Children.Add(_valueBox);
@@ -217,6 +250,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
 
     public event EventHandler<bool>? PhoneToggleRequested;
     public event EventHandler<bool>? EmailToggleRequested;
+    public event EventHandler<bool>? UnitedStatesToggleRequested;
     public event EventHandler? ResetProtectionScopeRequested;
     public event EventHandler<AddExceptionRequest>? AddExceptionRequested;
     public event EventHandler<UserExceptionValue>? DeleteExceptionRequested;
@@ -251,6 +285,7 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
         {
             _phoneToggle.IsChecked = state.PhoneEnabled;
             _emailToggle.IsChecked = state.EmailEnabled;
+            RenderUnitedStates(state.UnitedStatesChoice);
         }
         finally
         {
@@ -285,6 +320,48 @@ internal sealed class SettingsWindow : Window, ISettingsSurface
 
         RenderChromeSection(state.ChromeNativeMessagingReadiness);
         RenderEdgeSection(state.EdgeNativeMessagingReadiness);
+    }
+
+    // PRIVON 0.4.0 T-1 -- always shows the STORED truth the coordinator just reloaded: after a failed save the control is put back to the last
+    // verified state, never left showing a choice that was not persisted. The note says when the checked state is only the safe default.
+    private void RenderUnitedStates(UnitedStatesChoiceView? view)
+    {
+        if (view is null)
+        {
+            _countryHeader.Visibility = Visibility.Collapsed;
+            _unitedStatesToggle.Visibility = Visibility.Collapsed;
+            _unitedStatesNote.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        _countryHeader.Visibility = Visibility.Visible;
+        _unitedStatesToggle.Visibility = Visibility.Visible;
+        _unitedStatesToggle.IsChecked = view.Enabled;
+        _unitedStatesToggle.IsEnabled = view.Editable;
+
+        // The shipped opt-in gate (P1) first: before an intact activation the control is UNCHECKED because U.S. detection is not running -- a state the
+        // user has not chosen is never presented as a stored OFF, and an activation record that cannot be verified is said to be exactly that.
+        string? note = view.Gate switch
+        {
+            Privon.UsProductIntegration.UsOptInGate.Unavailable =>
+                "U.S. detection is unavailable because the official source data could not be verified.",
+            Privon.UsProductIntegration.UsOptInGate.NotSelected =>
+                "U.S. detection has not been enabled. U.S. detectors remain inactive until you enable this feature. Korean and Global detection continue to operate independently.",
+            Privon.UsProductIntegration.UsOptInGate.Unverifiable when view.Editable =>
+                "The U.S. detection enablement record could not be verified, so U.S. detection is off. This is not a choice you made; it is an unverified state. Enabling it again will record it anew.",
+            Privon.UsProductIntegration.UsOptInGate.Unverifiable =>
+                "The U.S. detection enablement record could not be verified or was written by a newer version, so it cannot be changed. U.S. detection is off.",
+            _ => null,
+        } ?? view.Basis switch
+        {
+            Privon.Storage.CountryChoiceState.Corrupt or Privon.Storage.CountryChoiceState.Unauthenticated =>
+                "The saved country setting could not be verified, so the default (on) applies.",
+            Privon.Storage.CountryChoiceState.UnknownVersion =>
+                "A country setting saved by a newer version exists and cannot be changed. The default (on) applies.",
+            _ => null,
+        };
+        _unitedStatesNote.Text = note ?? string.Empty;
+        _unitedStatesNote.Visibility = note is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     // PRIVON 0.3.1 Gate E5G.1C -- no registry path, manifest content, or other internal mechanics

@@ -23,6 +23,13 @@ internal interface IDecisionPromptSurface
     /// success.</summary>
     event EventHandler? Closed;
 
+    /// <summary>
+    /// What this surface can state about the press being handled right now (see <see cref="DecisionPromptInvocation"/>). Read on the UI thread,
+    /// synchronously, inside <see cref="ProtectAllRequested"/>: a click on the non-activating prompt leaves the supported app in the foreground
+    /// (<c>IsForeground</c> false); a keyboard or screen-reader user must activate the prompt first. Never a statement about any other window.
+    /// </summary>
+    DecisionPromptInvocation CaptureInvocation();
+
     /// <summary>Displays the surface. Content is deliberately generic -- no raw clipboard text, no
     /// <c>CanonicalValue</c>, no PiiType, no item count is required.</summary>
     void Show();
@@ -33,7 +40,7 @@ internal interface IDecisionPromptSurface
     void DisableProtectAction();
 
     /// <summary>Replaces the displayed content with a neutral, non-content-bearing
-    /// error/instruction message (e.g. "처리할 수 없습니다. 다시 복사해 주세요.") -- never a
+    /// error/instruction message (e.g. "Could not process this. Please copy again.") -- never a
     /// protection-success claim, never "Verified"/"보호 완료"/"검증 완료".</summary>
     void ShowNeutralFailure(string message);
 

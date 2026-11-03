@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- EXPERIMENTAL host: runs the real PRIVON app with the U.S. opt-in assembled. It is NOT part of PRIVON.slnx, NOT referenced by any src project and NOT
+       built or published by tools/publish-release.ps1 (which publishes only src/Privon.App). It exists only where someone builds it on purpose. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>Privon.UsOptInHost</AssemblyName>
+    <RootNamespace>Privon.UsOptInHost</RootNamespace>
+    <StartupObject>Privon.UsOptInHost.Program</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Privon.App\Privon.App.csproj" />
+    <ProjectReference Include="..\..\src\Privon.UsProductIntegration\Privon.UsProductIntegration.csproj" />
+  </ItemGroup>
+
+</Project>

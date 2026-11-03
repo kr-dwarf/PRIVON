@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Privon.App\Privon.App.csproj" />
+    <!-- ISOLATED product-integration candidate: the five U.S. identifiers, run through the real downstream path. -->
+    <ProjectReference Include="..\..\src\Privon.UsProductIntegration\Privon.UsProductIntegration.csproj" />
+    <ProjectReference Include="..\..\tools\Privon.UsOptInHost\Privon.UsOptInHost.csproj" />
+    <ProjectReference Include="..\..\src\Privon.UsSsn\Privon.UsSsn.csproj" />
   </ItemGroup>
 
   <ItemGroup>

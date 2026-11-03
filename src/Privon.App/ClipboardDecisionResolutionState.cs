@@ -65,8 +65,19 @@ internal sealed class ClipboardDecisionResolutionState
     public ClipboardRuntimeItemChoice GetChoice(ClipboardDecisionItem item) =>
         _choices.TryGetValue(item, out var choice) ? choice : ClipboardRuntimeItemChoice.Unresolved;
 
-    public bool HasGrant(RevisionStamp revision, CanonicalValue canonical) =>
-        _grants.Contains(new ClipboardBypassGrant(revision, canonical));
+    public bool HasGrant(RevisionStamp revision, DetectorId detectorId, CanonicalValue canonical) =>
+        _grants.Contains(new ClipboardBypassGrant(revision, detectorId, canonical));
+
+    public bool HasGrant(ClipboardBypassGrant grant) => _grants.Contains(grant);
+
+    /// <summary>Builds the next snapshot with exactly one grant removed (its consumption) -- choices and the committed flag carry over
+    /// unchanged; the older snapshot, if anything still holds it, keeps the grant (copy-on-write).</summary>
+    internal ClipboardDecisionResolutionState WithoutGrant(ClipboardBypassGrant grant)
+    {
+        var next = new HashSet<ClipboardBypassGrant>(_grants);
+        next.Remove(grant);
+        return new ClipboardDecisionResolutionState(_choices, next, Committed);
+    }
 
     /// <summary>Builds the next snapshot with exactly one item's choice updated -- everything
     /// else, including the (always <see langword="false"/> at this point -- see

@@ -5,16 +5,17 @@ namespace Privon.App;
 
 /// <summary>
 /// Phase 3B STEP25 -- the minimal immutable identity of one scope-bound, one-time bypass
-/// authorization: exactly the frozen grant identity (Phase 2W.1, reconfirmed by the Phase 3B
-/// STEP24 audit's GRANT_IDENTITY finding) -- <see cref="Revision"/> + <see cref="Canonical"/>,
-/// nothing else. Deliberately excludes <c>RiskLevel</c> (not part of the frozen identity -- a
+/// authorization. 0.4.0 (D3A POL-L1-ONCE-R1/R2) widens the frozen identity by exactly one value: it is now
+/// <see cref="Revision"/> + <see cref="DetectorId"/> + <see cref="Canonical"/>, nothing else -- a pass authorizes this canonical value as
+/// produced by THIS detector at THIS revision, so the same canonical reported by another detector is not covered. The grant is only ever
+/// minted for an item that carries a detector id, and it is consumed (atomically, at most once) by
+/// <see cref="ClipboardDecisionScope.TryConsumeBypassGrant"/>. Deliberately excludes <c>RiskLevel</c> (not part of the frozen identity -- a
 /// grant authorizes raw use of this exact canonical value at this exact revision, never
 /// conditioned on which RiskLevel classification originally required a decision -- see the
 /// Phase 3B STEP24 audit's GRANT_MULTIPLICITY finding), <c>Generation</c> (an App-level
 /// lifecycle-isolation concept, never a grant key), any scope reference, raw text, target,
-/// sequence, or consumed-state (grant consumption is future work -- Phase 3B STEP22/24 audits'
-/// SEND_CAPABILITY_LIMITATION finding; no Remove/Consume operation exists anywhere near this
-/// type yet).
+/// sequence, or consumed-state (consumption REMOVES the grant from the scope's resolution state; the grant itself carries
+/// no consumed flag -- a grant that exists is a grant that has not been used).
 ///
 /// A plain <c>readonly record struct</c> -- gives free structural equality/hashing so a set of
 /// these can be deduplicated with an ordinary <see cref="HashSet{T}"/>, matching the exact same
@@ -29,8 +30,8 @@ namespace Privon.App;
 /// own precedent). Never exposes the canonical value's own content or the revision's
 /// <c>SnapshotHash</c>.
 /// </summary>
-internal readonly record struct ClipboardBypassGrant(RevisionStamp Revision, CanonicalValue Canonical)
+internal readonly record struct ClipboardBypassGrant(RevisionStamp Revision, DetectorId DetectorId, CanonicalValue Canonical)
 {
     public override string ToString() =>
-        $"{nameof(ClipboardBypassGrant)} {{ PiiType = {Canonical.PiiType}, RevisionId = {Revision.RevisionId} }}";
+        $"{nameof(ClipboardBypassGrant)} {{ PiiType = {Canonical.PiiType}, RevisionId = {Revision.RevisionId} }}";  // never the detector id or the value
 }

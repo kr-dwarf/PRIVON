@@ -62,17 +62,26 @@ namespace Privon.App;
 // NAVIGATE: PrivonAppUiBridge owns dispatch; the two Settings services own mutations.
 internal sealed class SettingsCoordinator : IDisposable
 {
-    internal const string GenericFailureMessage = "요청을 처리할 수 없습니다. 다시 시도해 주세요.";
-    internal const string NoCandidateMessage = "입력한 값을 인식할 수 없습니다. 값을 확인해 주세요.";
-    internal const string MultipleCandidateMessage = "값을 하나만 입력해 주세요.";
-    internal const string TypeMismatchMessage = "선택한 유형과 입력한 값이 일치하지 않습니다.";
+    internal const string GenericFailureMessage = "The request could not be processed. Please try again.";
+    internal const string NoCandidateMessage = "The value you entered could not be recognized. Please check it.";
+    internal const string MultipleCandidateMessage = "Please enter only one value.";
+    internal const string TypeMismatchMessage = "The value does not match the selected type.";
+    internal const string CountryChoiceFailureMessage = "Could not save the country setting. The previous setting remains in effect.";
     internal const string MasterKeyUnavailableBanner =
-        "저장된 설정을 현재 사용할 수 없습니다.\n보호 기본값으로 동작 중입니다.";
+        "Saved settings are currently unavailable.\nRunning with protective defaults.";
 
     private readonly ProtectionCategorySettingsService _categoryService;
     private readonly UserExceptionService _exceptionService;
     private readonly DetectionPipeline _pipeline;
+
+    // Optional per-use pipeline (explicit opt-in only). When present it is resolved for every add-exception detection and
+    // _pipeline is not consulted; an exception from it is handled exactly like any other detection failure below.
+    private readonly Func<DetectionPipeline>? _pipelineSource;
     private readonly Func<bool> _isMasterKeyUnavailable;
+
+    // PRIVON 0.4.0 T-1 -- the explicit internal opt-in capability to offer and store the United States choice. Null in a shipped launch: the surface is
+    // never told to show the control, and the United States event is not even subscribed, so no request can reach the store.
+    private readonly CountryChoiceService? _countryChoices;
     private readonly Func<ISettingsSurface> _surfaceFactory;
     private readonly NativeMessagingHostRegistrationCoordinator _registrationCoordinator;
 
@@ -91,7 +100,9 @@ internal sealed class SettingsCoordinator : IDisposable
         DetectionPipeline pipeline,
         Func<bool> isMasterKeyUnavailable,
         Func<ISettingsSurface> surfaceFactory,
-        NativeMessagingHostRegistrationCoordinator registrationCoordinator)
+        NativeMessagingHostRegistrationCoordinator registrationCoordinator,
+        Func<DetectionPipeline>? pipelineSource = null,
+        CountryChoiceService? countryChoices = null)
     {
         ArgumentNullException.ThrowIfNull(categoryService);
         ArgumentNullException.ThrowIfNull(exceptionService);
@@ -102,10 +113,15 @@ internal sealed class SettingsCoordinator : IDisposable
         _categoryService = categoryService;
         _exceptionService = exceptionService;
         _pipeline = pipeline;
+        _pipelineSource = pipelineSource;
         _isMasterKeyUnavailable = isMasterKeyUnavailable;
         _surfaceFactory = surfaceFactory;
         _registrationCoordinator = registrationCoordinator;
+        _countryChoices = countryChoices;
     }
+
+    /// <summary>Raised after a United States choice was stored AND read back as the requested one -- never for a failed or unverified save.</summary>
+    internal event EventHandler? CountryChoiceChanged;
 
     /// <summary>The tray's single Settings entry point. ONE_CURRENT_SETTINGS_WINDOW: activates the
     /// existing surface if one is already open; otherwise constructs a fresh one, wires it, renders
@@ -152,6 +168,11 @@ internal sealed class SettingsCoordinator : IDisposable
         surface.Closed += (_, _) => OnSurfaceClosed(surface);
         surface.PhoneToggleRequested += (_, desired) => HandleMutation(surface, () => _categoryService.SetPhoneEnabled(desired));
         surface.EmailToggleRequested += (_, desired) => HandleMutation(surface, () => _categoryService.SetEmailEnabled(desired));
+        if (_countryChoices is not null)
+        {
+            surface.UnitedStatesToggleRequested += (_, desired) => HandleCountryToggle(surface, desired);
+        }
+
         surface.ResetProtectionScopeRequested += (_, _) => HandleMutation(surface, () => _categoryService.Reset());
         surface.ResetExceptionsRequested += (_, _) => HandleMutation(surface, () => _exceptionService.Reset());
         surface.DeleteExceptionRequested += (_, value) =>
@@ -189,6 +210,34 @@ internal sealed class SettingsCoordinator : IDisposable
         }
 
         RenderCurrentState(surface, statusMessage);
+    }
+
+    // PRIVON 0.4.0 T-1 -- the ONE path from a user's United States ON/OFF input to the store. It is reached only from the surface event above, which
+    // exists only when the capability was supplied. The save is synchronous on the dispatcher thread, so requests are applied in the order they arrive
+    // (a rapid ON, OFF, ON is stored as ON, OFF, ON and ends as the last), a repeated identical request writes nothing, and the surface is ALWAYS
+    // re-rendered from what the store reads back -- a failed or unverified save puts the control back to the last verified state with a message.
+    private void HandleCountryToggle(ISettingsSurface surface, bool desired)
+    {
+        if (_disposed || _countryChoices is null) return;
+
+        string? statusMessage = null;
+        bool stored = false;
+        try
+        {
+            _countryChoices.SetUnitedStates(desired);
+            stored = true;
+        }
+        catch
+        {
+            statusMessage = CountryChoiceFailureMessage;
+        }
+
+        RenderCurrentState(surface, statusMessage);
+        if (stored)
+        {
+            try { CountryChoiceChanged?.Invoke(this, EventArgs.Empty); }
+            catch { /* a subscriber's failure must never undo or hide a stored choice */ }
+        }
     }
 
     // COMMANDER CORRECTION (Gate E5G.1C) -- FAILED_ACTION_MUST_SURFACE: unlike every other mutation
@@ -247,7 +296,7 @@ internal sealed class SettingsCoordinator : IDisposable
         DetectionResult detectionResult;
         try
         {
-            detectionResult = _pipeline.Detect(request.RawValue);
+            detectionResult = (_pipelineSource is null ? _pipeline : _pipelineSource()).Detect(request.RawValue);
         }
         catch
         {
@@ -313,7 +362,8 @@ internal sealed class SettingsCoordinator : IDisposable
             MasterKeyUnavailable: unavailable,
             StatusMessage: statusMessage,
             ChromeNativeMessagingReadiness: chromeReadinessOverride ?? InspectChrome(),
-            EdgeNativeMessagingReadiness: edgeReadinessOverride ?? InspectEdge()));
+            EdgeNativeMessagingReadiness: edgeReadinessOverride ?? InspectEdge(),
+            UnitedStatesChoice: _countryChoices?.ViewUnitedStates(unavailable)));
     }
 
     // PRIVON 0.3.1 Gate E5G.1C -- CHROME_PROVISIONING: the verified Chrome identity is resolved

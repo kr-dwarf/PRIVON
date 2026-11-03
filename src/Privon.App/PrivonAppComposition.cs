@@ -1,7 +1,9 @@
 using System.IO;
 using System.Runtime.ExceptionServices;
 using Privon.Browser;
+using Privon.Detection;
 using Privon.Storage;
+using Privon.UsProductIntegration;
 using Privon.Windows;
 
 namespace Privon.App;
@@ -248,6 +250,11 @@ internal sealed class PrivonAppComposition : IDisposable
     // BuildGraph, exactly like every other direct-ownership field here.
     private PrivonLocalStore? _store;
     private ProtectionCategorySettingsService? _categorySettingsService;
+
+    // PRIVON 0.4.0 T-1 -- EXPLICIT OPT-IN (false unless a gated owner or the experimental host asks for it): offer the United States ON/OFF choice in Settings. Only when set does
+    // BuildGraph create the service that stores it (over the SAME store instance as the other services); otherwise Settings shows no country control.
+    private readonly bool _offerUnitedStatesChoice;
+    private CountryChoiceService? _countryChoiceService;
     private UserExceptionService? _userExceptionService;
 
     // Phase 3C STEP41.1 correction (STEP43.1): the ONE diagnostic recorder instance for the whole
@@ -271,6 +278,27 @@ internal sealed class PrivonAppComposition : IDisposable
     // environment-variable check (public constructor) -- never re-evaluated afterward, never a
     // settings screen, never persisted anywhere.
     private readonly bool _enableDiagnostics;
+
+    // EXPLICIT OPT-IN (null for a composition without U.S. detection; the shipped launch sets it from its gated owner). When set, it supplies the detection pipeline for EVERY consumer this
+    // composition wires -- the clipboard processor built in BuildGraph and the Settings add-exception canonicalizer
+    // PrivonAppUiBridge.CreateProduction wires -- as one shared per-use delegate, so both always see the same current
+    // pipeline. It is resolved at the start of each use; a failure of the delegate fails that use and is never replaced by
+    // an earlier pipeline. The shipped constructor never sets it, so the default pipeline is built exactly as before.
+    private readonly Func<DetectionPipeline>? _detectionPipelineSource;
+
+    // PROTECTION STATUS (every launch, shipped included): the aggregator that turns each attempt's terminal event into a ProtectionState, so a
+    // failed rewrite, a processing exception or a pending decision is a recorded state the tray can show rather than silence. Built in BuildGraph
+    // for every composition; it does not depend on which detection pipeline is in use, so it changes no detection scope. It decorates the optional
+    // diagnostic recorder; it performs no I/O, holds no clipboard text, and blocks nothing.
+    private ClipboardProtectionStatusTracker? _protectionStatus;
+
+    // EXPLICIT OPT-IN ONLY (null for a composition without U.S. detection): what the opt-in U.S. pipeline states about its detectors right now. When null the
+    // tray shows no U.S. readiness at all -- nothing is inferred from the pipeline source. It is read on the UI thread at render time and never cached.
+    private readonly Func<UsReadinessReport>? _usReadinessSource;
+
+    // SHIPPED OPT-IN (P1; null for a composition without U.S. detection): serves the shipped pipeline until the user has explicitly activated U.S. detection,
+    // owns the readiness the tray shows, and tells Settings whether the production authority is usable. Disposed last, with the composition.
+    private readonly UsGatedOptInOwner? _usGatedOwner;
 
     /// <summary>
     /// PUBLIC_DIAGNOSTIC_DEFAULT_OFF (STEP43.1): the only constructor <c>App.xaml.cs</c> ever
@@ -298,6 +326,39 @@ internal sealed class PrivonAppComposition : IDisposable
     // in this codebase ever sets it implicitly. Exact-match "1" only -- no "true"/"yes"/case-
     // insensitive parsing, matching this codebase's established preference for simple, explicit
     // checks over general-purpose config parsing.
+    /// <summary>
+    /// The composition an experimental opt-in host asks for through <see cref="PrivonOptInSession"/>: the shipped composition with the real
+    /// production monitors and diagnostics policy (identical to the public constructor), plus the two opt-in delegates and the Settings country choice. It
+    /// is an additional factory; the public constructor and every shipped path are untouched.
+    /// </summary>
+    internal static PrivonAppComposition CreateWithUsOptIn(
+        string storageRootPath, Func<DetectionPipeline> pipelineSource, Func<UsReadinessReport> readinessSource) =>
+        new(storageRootPath, new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor(),
+            DiagnosticsEnabledFromEnvironment(), pipelineSource, readinessSource, offerUnitedStatesChoice: true);
+
+    /// <summary>
+    /// The composition the SHIPPED startup (<c>App.OnStartup</c>) runs: the shipped composition with the real production monitors and diagnostics policy, plus
+    /// the explicit U.S. opt-in (P1) -- a Settings control to turn U.S. detection on, a tray readiness line, and a pipeline that is the shipped one until the user
+    /// has activated it. It changes no Korean / Global detection and activates nothing. If the opt-in layer cannot be built at all, this is exactly the
+    /// plain shipped composition (no U.S. control is offered).
+    /// </summary>
+    internal static PrivonAppComposition CreateProduction()
+    {
+        UsGatedOptInOwner owner;
+        try
+        {
+            owner = UsGatedOptInOwner.CreateProduction(PrivonLocalStore.OpenOrCreate(ProductionStorageRootPath));
+        }
+        catch
+        {
+            return new PrivonAppComposition();
+        }
+
+        return new PrivonAppComposition(
+            ProductionStorageRootPath, new SessionLockNotificationAdapter(), new ClipboardChangeMonitor(), new ComposerTextReader(), new ForegroundChangeMonitor(),
+            DiagnosticsEnabledFromEnvironment(), usGatedOwner: owner);
+    }
+
     private static bool DiagnosticsEnabledFromEnvironment() =>
         Environment.GetEnvironmentVariable("PRIVON_ENABLE_DIAGNOSTICS") == "1";
 
@@ -327,7 +388,11 @@ internal sealed class PrivonAppComposition : IDisposable
         ClipboardChangeMonitor monitor,
         ComposerTextReader composerReader,
         ForegroundChangeMonitor foregroundChangeMonitor,
-        bool enableDiagnostics = false)
+        bool enableDiagnostics = false,
+        Func<DetectionPipeline>? detectionPipelineSource = null,
+        Func<UsReadinessReport>? usReadinessSource = null,
+        bool offerUnitedStatesChoice = false,
+        UsGatedOptInOwner? usGatedOwner = null)
     {
         ArgumentNullException.ThrowIfNull(storageRootPath);
         ArgumentNullException.ThrowIfNull(sessionLockNotification);
@@ -340,12 +405,41 @@ internal sealed class PrivonAppComposition : IDisposable
         _composerReader = composerReader;
         _foregroundChangeMonitor = foregroundChangeMonitor;
         _enableDiagnostics = enableDiagnostics;
+        _detectionPipelineSource = detectionPipelineSource;
+        _usReadinessSource = usReadinessSource;
+        _offerUnitedStatesChoice = offerUnitedStatesChoice;
+
+        if (usGatedOwner is not null)
+        {
+            // the shipped opt-in supplies all three itself: the gated pipeline, the gate-aware readiness and the Settings control
+            if (detectionPipelineSource is not null || usReadinessSource is not null)
+                throw new ArgumentException("A gated U.S. owner supplies the pipeline and the readiness itself.", nameof(usGatedOwner));
+            _usGatedOwner = usGatedOwner;
+            _detectionPipelineSource = usGatedOwner.CurrentPipeline;
+            _usReadinessSource = () => UsReadinessAdapter.From(usGatedOwner.CurrentReadiness());
+            _offerUnitedStatesChoice = true;
+        }
     }
+
+    /// <summary>
+    /// The explicit opt-in pipeline delegate, or <see langword="null"/> for a shipped composition. Read by
+    /// <see cref="PrivonAppUiBridge.CreateProduction"/> so the Settings consumer uses the same delegate as the processor.
+    /// </summary>
+    internal Func<DetectionPipeline>? DetectionPipelineSource => _detectionPipelineSource;
+
+    /// <summary>The explicit opt-in U.S. readiness source, or <see langword="null"/> for a shipped composition (then nothing is displayed).</summary>
+    internal Func<UsReadinessReport>? UsReadinessSource => _usReadinessSource;
+
+    /// <summary>The protection status aggregator every composition builds once <see cref="Start"/> has built the graph (null before that).</summary>
+    internal ClipboardProtectionStatusTracker? ProtectionStatus => _protectionStatus;
 
     /// <summary>Reachable once <see cref="Start"/> has completed successfully -- the future entry
     /// point a Runtime Decision UI will call <c>ResolveAsync</c> against. <see langword="null"/>
     /// before a successful <see cref="Start"/>.</summary>
     internal ClipboardDecisionActionResolver? Resolver => _resolver;
+
+    /// <summary>The ONE foreground target capture the coordinator and the resolver already share; the decision prompt reads it only to remember the supported target it was shown for.</summary>
+    internal IForegroundTargetCapture? TargetCapture => _targetCapture;
 
     /// <summary>Reachable once <see cref="Start"/> has completed successfully -- the future direct
     /// <c>VerifyAsync</c> entry point. <see langword="null"/> before a successful <see cref="Start"/>.</summary>
@@ -372,6 +466,9 @@ internal sealed class PrivonAppComposition : IDisposable
     /// service over a different <see cref="PrivonLocalStore"/> instance. <see langword="null"/>
     /// before a successful <see cref="Start"/>.</summary>
     internal ProtectionCategorySettingsService? CategorySettingsService => _categorySettingsService;
+
+    /// <summary>The United States choice service, or <see langword="null"/> unless the explicit internal opt-in was given (then Settings shows no country control).</summary>
+    internal CountryChoiceService? CountryChoices => _countryChoiceService;
 
     /// <summary>PRIVON v0.2.1 Gate 3C -- reachable once <see cref="Start"/> has completed
     /// successfully, for the SAME reason as <see cref="CategorySettingsService"/>.
@@ -453,18 +550,26 @@ internal sealed class PrivonAppComposition : IDisposable
     // monitor, the composer reader) is STARTED here -- only constructed/subscribed.
     private void BuildGraph()
     {
-        var store = PrivonLocalStore.OpenOrCreate(_storageRootPath);
+        // F-1: with a gated U.S. owner the graph ADOPTS the store that owner was built over -- the production root is opened once, so Settings, the providers and the
+        // detection see one answer (two opens of the same files can disagree about whether the master key was readable). Without one (every other construction,
+        // and an owner built from bare sources) the graph opens the root itself, exactly as before. PrivonLocalStore holds no handle: there is nothing to dispose.
+        var store = _usGatedOwner?.Store ?? PrivonLocalStore.OpenOrCreate(_storageRootPath);
         _store = store;
         var trustExceptionProvider = new TrustExceptionProvider(store);
         var categorySettingsProvider = new ProtectionCategorySettingsProvider(store);
         var userExceptionProvider = new UserExceptionProvider(store);
-        var processor = new ClipboardPrivacyProcessor(trustExceptionProvider, categorySettingsProvider, userExceptionProvider);
+        var processor = _detectionPipelineSource is null
+            ? new ClipboardPrivacyProcessor(trustExceptionProvider, categorySettingsProvider, userExceptionProvider)
+            : new ClipboardPrivacyProcessor(_detectionPipelineSource, trustExceptionProvider, categorySettingsProvider, userExceptionProvider);
 
         // PRIVON v0.2.1 Gate 3C -- the SAME store instance backs both the read-only providers above
         // (consumed by the clipboard-privacy pipeline) and these mutation-capable services (consumed
         // only by the Settings UI) -- never a second, independently-opened PrivonLocalStore.
         _categorySettingsService = new ProtectionCategorySettingsService(store);
         _userExceptionService = new UserExceptionService(store);
+        _countryChoiceService = !_offerUnitedStatesChoice
+            ? null
+            : _usGatedOwner is { } gated ? CountryChoiceService.ForShippedOptIn(store, () => gated.AuthorityUsable) : new CountryChoiceService(store);
 
         _operationGate = new ClipboardOperationGate();
         _lifecycle = new ClipboardDecisionScopeLifecycle();
@@ -528,6 +633,8 @@ internal sealed class PrivonAppComposition : IDisposable
             _monitor.WriteDiagnosticObserved += (_, writeEvent) => _diagnostics.RecordWriteDiagnosticEvent(writeEvent);
         }
 
+        _protectionStatus = new ClipboardProtectionStatusTracker(_diagnostics);
+
         _coordinator = new ClipboardPrivacyCoordinator(
             readTransport,
             _targetCapture,
@@ -538,7 +645,7 @@ internal sealed class PrivonAppComposition : IDisposable
             _operationGate,
             _verifier,
             _verifier,
-            diagnostics: _diagnostics,
+            diagnostics: (IClipboardDiagnosticRecorder?)_protectionStatus ?? _diagnostics,
             foregroundTrigger: foregroundTrigger,
             webAuthorizationSource: _webAuthorizationSource);
 
@@ -550,7 +657,9 @@ internal sealed class PrivonAppComposition : IDisposable
             writeTransport,
             processor,
             _verifier,
-            webAuthorizationSource: _webAuthorizationSource);
+            webAuthorizationSource: _webAuthorizationSource,
+            // DECISION_TERMINAL_STATUS -- the same tracker the coordinator reports to, so a decision's outcome reaches the status the user sees.
+            diagnostics: _protectionStatus);
 
         // SESSION_LOCK_CALLBACK subscription -- last, since it closes over _lifecycle/_verifier,
         // which must already exist. Not started here (Start() is called separately, strictly before
@@ -593,6 +702,7 @@ internal sealed class PrivonAppComposition : IDisposable
         Safe(() => _targetCapture?.Dispose());
         Safe(() => _operationGate?.Dispose());
         Safe(() => _diagnostics?.Dispose());
+        Safe(() => _protectionStatus?.Dispose());
 
         _coordinator = null;
         _epochTracker = null;
@@ -605,6 +715,7 @@ internal sealed class PrivonAppComposition : IDisposable
         _diagnostics = null;
         _categorySettingsService = null;
         _userExceptionService = null;
+        _countryChoiceService = null;
         _store = null;
         _webAuthorizationSource = null;
         _webManager = null;
@@ -656,6 +767,7 @@ internal sealed class PrivonAppComposition : IDisposable
         Step(() => _targetCapture?.Dispose());
         Step(() => _operationGate?.Dispose());
         Step(() => _diagnostics?.Dispose());
+        Step(() => _usGatedOwner?.Dispose());
 
         if (firstFailure is not null)
         {

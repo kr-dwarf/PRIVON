@@ -232,7 +232,8 @@ internal sealed class ClipboardDecisionScope
                 nameof(item), item.RiskLevel, "Unsupported RiskLevel for runtime decision resolution (only Level1/Level3 NeedsDecision items are expected)."),
         };
 
-        Volatile.Write(ref _resolutionState, state.WithChoice(item, next));
+        if (!ReferenceEquals(Interlocked.CompareExchange(ref _resolutionState, state.WithChoice(item, next), state), state))
+            throw new InvalidOperationException("This scope's resolution state was changed concurrently.");
         return next;
     }
 
@@ -276,21 +277,50 @@ internal sealed class ClipboardDecisionScope
         var grants = new HashSet<ClipboardBypassGrant>();
         foreach (var item in Items)
         {
-            if (state.GetChoice(item) == ClipboardRuntimeItemChoice.BypassOnce)
+            // An item whose detector stamped no id cannot be named by a grant: no grant is minted for it (fail closed).
+            if (state.GetChoice(item) == ClipboardRuntimeItemChoice.BypassOnce && item.DetectorId.HasValue)
             {
-                grants.Add(new ClipboardBypassGrant(finalRevision, item.Canonical));
+                grants.Add(new ClipboardBypassGrant(finalRevision, item.DetectorId, item.Canonical));
             }
         }
 
-        Volatile.Write(ref _resolutionState, state.WithCommit(grants));
+        // Compare-and-swap, never a blind write: a commit that lost a race must not be able to install a fresh grant set over a state
+        // in which a grant has already been consumed (a consumed grant must never come back).
+        if (!ReferenceEquals(Interlocked.CompareExchange(ref _resolutionState, state.WithCommit(grants), state), state))
+            throw new InvalidOperationException("This scope's resolution state was changed concurrently.");
     }
 
     /// <summary>Whether an exact <see cref="ClipboardBypassGrant"/> matching
-    /// <paramref name="revision"/> + <paramref name="canonical"/> currently exists on this scope
-    /// -- read-only; grant consumption is not implemented anywhere near this type yet (Phase 3B
-    /// STEP22/24 audits' SEND_CAPABILITY_LIMITATION).</summary>
-    public bool HasBypassGrant(RevisionStamp revision, CanonicalValue canonical) =>
-        Volatile.Read(ref _resolutionState).HasGrant(revision, canonical);
+    /// <paramref name="revision"/> + <paramref name="detectorId"/> + <paramref name="canonical"/> currently exists on this scope
+    /// -- read-only. All three values must match; there is no overload that ignores one of them.</summary>
+    public bool HasBypassGrant(RevisionStamp revision, DetectorId detectorId, CanonicalValue canonical) =>
+        detectorId.HasValue && Volatile.Read(ref _resolutionState).HasGrant(revision, detectorId, canonical);
+
+    /// <summary>
+    /// ONE_REVISION_PASS consumption (D3A POL-L1-ONCE-R1/R2). Atomically removes the exact grant {<paramref name="revision"/>,
+    /// <paramref name="detectorId"/>, <paramref name="canonical"/>} and reports <see langword="true"/> for the one caller whose
+    /// compare-and-swap removed it; every other caller -- a replay, a concurrent second caller, a different revision, another
+    /// detector's identical canonical, a different canonical -- gets <see langword="false"/> and changes nothing.
+    ///
+    /// Only a LEVEL-1 pass can be consumed: the scope must hold a Level-1 item for exactly this detector and canonical. A grant that was
+    /// minted for a Level-3 item (the two-step-confirmed raw use) is never consumable here, and no pass exists for Level 2 at all.
+    /// Requires <see cref="Committed"/> -- grants only exist after the all-items-resolved commit. Whether the scope is still the ACTIVE
+    /// one is the caller's responsibility (this type does not know the lifecycle); revision changes are handled by the revision value
+    /// itself: a changed text observes a strictly later revision id, which no existing grant carries.
+    /// </summary>
+    internal bool TryConsumeBypassGrant(RevisionStamp revision, DetectorId detectorId, CanonicalValue canonical)
+    {
+        if (!detectorId.HasValue) return false;
+        if (!Items.Any(i => i.RiskLevel == RiskLevel.Level1 && i.DetectorId.Equals(detectorId) && i.Canonical.Equals(canonical))) return false;
+
+        var grant = new ClipboardBypassGrant(revision, detectorId, canonical);
+        while (true)
+        {
+            var state = Volatile.Read(ref _resolutionState);
+            if (!state.Committed || !state.HasGrant(grant)) return false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _resolutionState, state.WithoutGrant(grant), state), state)) return true;
+        }
+    }
 
     /// <summary>
     /// SCOPE_DIAGNOSTICS (Phase 3B STEP21, extended Phase 3B STEP25): explicit, self-contained

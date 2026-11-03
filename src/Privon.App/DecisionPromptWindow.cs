@@ -1,7 +1,9 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 
 namespace Privon.App;
 
@@ -80,7 +82,31 @@ internal sealed class DecisionPromptWindow : Window, IDecisionPromptSurface
         internal static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
         [DllImport("user32.dll")]
+        internal static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
         internal static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        internal const uint THREAD_QUERY_LIMITED_INFORMATION = 0x0800;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenThread(uint dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetProcessIdOfThread(IntPtr hThread);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        /// <summary>The process that owns <paramref name="threadId"/>, or 0 when it cannot be resolved. A thread id is NEVER a process id.</summary>
+        internal static uint ResolveProcessIdOfThread(uint threadId)
+        {
+            if (threadId == 0) return 0;
+            var handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, threadId);
+            if (handle == IntPtr.Zero) return 0;
+            try { return GetProcessIdOfThread(handle); }
+            finally { CloseHandle(handle); }
+        }
     }
 
     private readonly TextBlock _messageText;
@@ -98,19 +124,26 @@ internal sealed class DecisionPromptWindow : Window, IDecisionPromptSurface
 
         _messageText = new TextBlock
         {
-            Text = "개인정보가 감지되었습니다.\n클립보드 내용을 보호하려면 보호하기를 눌러주세요.",
+            Text = "Personal information detected.\nSelect Protect All to protect the clipboard content.",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(16, 16, 16, 8),
         };
 
         _protectAllButton = new System.Windows.Controls.Button
         {
-            Content = "모두 보호",
+            Content = "Protect All",
             Margin = new Thickness(16, 0, 16, 16),
             Padding = new Thickness(12, 6, 12, 6),
             HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
         };
         _protectAllButton.Click += (_, _) => ProtectAllRequested?.Invoke(this, EventArgs.Empty);
+
+        // PROMPT_INVOCATION_EVIDENCE: the click of a fresh Enter / Space addressed to the button is raised synchronously INSIDE that key's routing, so
+        // a flag that lives exactly as long as that routing binds the key to the click and to nothing else.
+        PreviewKeyDown += OnPreviewKeyDown;
+        PreviewKeyUp += OnPreviewKeyUp;
+        AddHandler(Keyboard.KeyDownEvent, new System.Windows.Input.KeyEventHandler(OnKeyRoutingEnded), handledEventsToo: true);
+        AddHandler(Keyboard.KeyUpEvent, new System.Windows.Input.KeyEventHandler(OnKeyRoutingEnded), handledEventsToo: true);
 
         var panel = new StackPanel();
         panel.Children.Add(_messageText);
@@ -129,9 +162,90 @@ internal sealed class DecisionPromptWindow : Window, IDecisionPromptSurface
         var hwnd = new WindowInteropHelper(this).Handle;
         int exStyle = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE);
         NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE, exStyle | NativeMethods.WS_EX_NOACTIVATE);
+        HwndSource.FromHwnd(hwnd)?.AddHook(OnWindowMessage);
     }
 
+    // PROMPT_INVOCATION_EVIDENCE (PRIVON 0.4.0, policy B). Two synchronous, window-local facts, both consumed at the press and never stored beyond it.
+    private const int WM_ACTIVATEAPP = 0x001C;
+
+    // The process that was the active application right before this window's application became active, for the CURRENT activation only: set by
+    // WM_ACTIVATEAPP(activated) from the thread id the OS passes (resolved to its owning process, never read as a process id), cleared on
+    // deactivation. 0 = unknown / not in an activation interval. Never an identity when unknown.
+    private uint _previousActiveProcessId;
+
+    /// <summary>The recorded predecessor for the current activation (0 = unknown). For tests of the thread-id handling; the press reads it only through <see cref="CaptureInvocation"/>.</summary>
+    internal uint RecordedPreviousActiveProcessId => _previousActiveProcessId;
+
+    // True only while a fresh Enter (key down) or Space (key up) addressed to the Protect button is being routed.
+    private bool _keyboardCommitRouting;
+
+    private IntPtr OnWindowMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_ACTIVATEAPP)
+            NoteApplicationActivation(wParam != IntPtr.Zero, unchecked((uint)lParam.ToInt64()));
+        return IntPtr.Zero;
+    }
+
+    /// <summary>Records (or clears) which application was active just before this one. <paramref name="otherAppThreadId"/> is a THREAD id.</summary>
+    internal void NoteApplicationActivation(bool activated, uint otherAppThreadId)
+    {
+        _previousActiveProcessId = activated ? NativeMethods.ResolveProcessIdOfThread(otherAppThreadId) : 0;
+        _freshSpaceDownOnButton = false;   // a key down seen in an earlier activation never carries into this one
+    }
+
+    // Space clicks on the key UP, but WPF's button marks itself pressed on EVERY Space key down -- including the auto-repeats of a Space that was already held
+    // before the focus arrived -- so the key up alone proves nothing. It counts only after a FRESH Space key down addressed to the button in the current
+    // activation; any other key, or a new activation, forgets it.
+    private bool _freshSpaceDownOnButton;
+
+    private void OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Return) BeginKeyboardCommitRouting(e);
+        else if (e.Key == Key.Space) { if (IsFreshKeyForButton(e)) _freshSpaceDownOnButton = true; }
+        else _freshSpaceDownOnButton = false;
+    }
+
+    private void OnPreviewKeyUp(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Space) return;
+        bool freshDown = _freshSpaceDownOnButton;
+        _freshSpaceDownOnButton = false;
+        if (freshDown) BeginKeyboardCommitRouting(e);
+    }
+
+    // Only a FRESH (not auto-repeated) key addressed to the enabled Protect button itself, with no Alt / Ctrl / Windows held. A key addressed to anything
+    // else in this window, a repeat of a key pressed before the focus arrived, or a modified key never counts.
+    private bool IsFreshKeyForButton(System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.IsRepeat) return false;
+        if (!ReferenceEquals(e.OriginalSource, _protectAllButton) || !_protectAllButton.IsEnabled) return false;
+        if ((Keyboard.Modifiers & (ModifierKeys.Alt | ModifierKeys.Control | ModifierKeys.Windows)) != ModifierKeys.None) return false;
+        return true;
+    }
+
+    private void BeginKeyboardCommitRouting(System.Windows.Input.KeyEventArgs e)
+    {
+        if (!IsFreshKeyForButton(e)) return;
+
+        _keyboardCommitRouting = true;
+        // If this key's routing is cut short (a handler marks the preview event handled, so the key event is never raised) nothing would clear the flag;
+        // a Send-priority operation runs before any other queued work, so a later UIA click can never inherit it.
+        Dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(EndKeyboardCommitRouting));
+    }
+
+    private void OnKeyRoutingEnded(object sender, System.Windows.Input.KeyEventArgs e) => EndKeyboardCommitRouting();
+
+    private void EndKeyboardCommitRouting() => _keyboardCommitRouting = false;
+
     public event EventHandler? ProtectAllRequested;
+
+    /// <summary>See <see cref="IDecisionPromptSurface.CaptureInvocation"/>. Not foreground (and nothing else) before the window has a handle.</summary>
+    public DecisionPromptInvocation CaptureInvocation()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        bool foreground = hwnd != IntPtr.Zero && NativeMethods.GetForegroundWindow() == hwnd;
+        return new DecisionPromptInvocation(foreground, _keyboardCommitRouting, foreground ? _previousActiveProcessId : 0);
+    }
 
     event EventHandler? IDecisionPromptSurface.Closed
     {

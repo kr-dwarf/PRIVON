@@ -13,9 +13,9 @@ namespace Privon.App.Tests;
 public class ClipboardDecisionScopeResolutionTests
 {
     private static readonly ClipboardDecisionItem Level1Item =
-        new(new CanonicalValue(PiiType.Phone, "01012345678"), RiskLevel.Level1);
+        new(new CanonicalValue(PiiType.Phone, "01012345678"), RiskLevel.Level1, DetectorId.Create("test.phone"));
     private static readonly ClipboardDecisionItem Level3Item =
-        new(new CanonicalValue(PiiType.ResidentRegistrationNumber, "901231-1234567"), RiskLevel.Level3);
+        new(new CanonicalValue(PiiType.ResidentRegistrationNumber, "901231-1234567"), RiskLevel.Level3, DetectorId.Create("test.rrn"));
 
     private static ClipboardDecisionScope CreateScope(params ClipboardDecisionItem[] items)
     {
@@ -299,7 +299,7 @@ public class ClipboardDecisionScopeResolutionTests
         var scope = CreateScope(Level1Item);
         scope.ApplyIntent(Level1Item, ClipboardDecisionIntent.BypassOnce);
 
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.DetectorId, Level1Item.Canonical));
     }
 
     // ---- (resolution-state level, T. NO PRECOMMIT GRANTS) choice mutation alone never touches
@@ -329,7 +329,7 @@ public class ClipboardDecisionScopeResolutionTests
         scope.CommitResolved(scope.InitialStamp);
 
         Assert.True(scope.Committed);
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.DetectorId, Level1Item.Canonical));
     }
 
     // ---- 4. all Bypass commit -> one grant per unique CanonicalValue ----
@@ -342,7 +342,7 @@ public class ClipboardDecisionScopeResolutionTests
         scope.CommitResolved(scope.InitialStamp);
 
         Assert.True(scope.Committed);
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, Level1Item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, Level1Item.DetectorId, Level1Item.Canonical));
     }
 
     // ---- 5. mixed Protect+Bypass commit -> grants only for Bypass choices ----
@@ -356,8 +356,8 @@ public class ClipboardDecisionScopeResolutionTests
 
         scope.CommitResolved(scope.InitialStamp);
 
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.Canonical));
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, Level3Item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.DetectorId, Level1Item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, Level3Item.DetectorId, Level3Item.Canonical));
     }
 
     // ---- 6/7. exact final RevisionStamp used for every grant; a different revision never
@@ -373,8 +373,8 @@ public class ClipboardDecisionScopeResolutionTests
 
         scope.CommitResolved(postWriteRevision);
 
-        Assert.True(scope.HasBypassGrant(postWriteRevision, Level1Item.Canonical));
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.Canonical));
+        Assert.True(scope.HasBypassGrant(postWriteRevision, Level1Item.DetectorId, Level1Item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.DetectorId, Level1Item.Canonical));
     }
 
     [Fact]
@@ -387,7 +387,7 @@ public class ClipboardDecisionScopeResolutionTests
         var otherTracker = new RevisionTracker();
         var otherRevision = otherTracker.Observe("unrelated text");
 
-        Assert.False(scope.HasBypassGrant(otherRevision, Level1Item.Canonical));
+        Assert.False(scope.HasBypassGrant(otherRevision, Level1Item.DetectorId, Level1Item.Canonical));
     }
 
     // ---- 8. different canonical does not match grant ----
@@ -400,7 +400,7 @@ public class ClipboardDecisionScopeResolutionTests
 
         var otherCanonical = new CanonicalValue(PiiType.Phone, "01099998888");
 
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, otherCanonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, Level1Item.DetectorId, otherCanonical));
     }
 
     // ---- 9/10. same canonical deduplicates; RiskLevel difference does not duplicate grant
@@ -411,8 +411,9 @@ public class ClipboardDecisionScopeResolutionTests
     public void CommitResolved_SameCanonicalDifferentRiskLevel_CollapsesToOneGrant()
     {
         var canonical = new CanonicalValue(PiiType.Phone, "01012345678");
-        var itemAsLevel1 = new ClipboardDecisionItem(canonical, RiskLevel.Level1);
-        var itemAsLevel3 = new ClipboardDecisionItem(canonical, RiskLevel.Level3);
+        var detector = DetectorId.Create("test.phone");
+        var itemAsLevel1 = new ClipboardDecisionItem(canonical, RiskLevel.Level1, detector);
+        var itemAsLevel3 = new ClipboardDecisionItem(canonical, RiskLevel.Level3, detector);
         var scope = CreateScope(itemAsLevel1, itemAsLevel3);
 
         scope.ApplyIntent(itemAsLevel1, ClipboardDecisionIntent.BypassOnce);
@@ -421,7 +422,7 @@ public class ClipboardDecisionScopeResolutionTests
 
         scope.CommitResolved(scope.InitialStamp);
 
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, detector, canonical));
     }
 
     // ---- 11. second CommitResolved rejected ----
@@ -452,7 +453,7 @@ public class ClipboardDecisionScopeResolutionTests
     {
         var tracker = new RevisionTracker();
         var revision = tracker.Observe("x");
-        var grant = new ClipboardBypassGrant(revision, Level1Item.Canonical);
+        var grant = new ClipboardBypassGrant(revision, Level1Item.DetectorId, Level1Item.Canonical);
 
         var state = ClipboardDecisionResolutionState.Empty
             .WithChoice(Level1Item, ClipboardRuntimeItemChoice.BypassOnce)
@@ -460,7 +461,7 @@ public class ClipboardDecisionScopeResolutionTests
 
         Assert.True(state.Committed);
         Assert.Equal(1, state.GrantCount);
-        Assert.True(state.HasGrant(grant.Revision, grant.Canonical));
+        Assert.True(state.HasGrant(grant.Revision, grant.DetectorId, grant.Canonical));
     }
 
     // ---- old immutable snapshot cannot be mutated by a later update built from it ----
@@ -540,12 +541,14 @@ public class ClipboardDecisionScopeResolutionTests
     }
 
     [Fact]
-    public void Grant_HasOnlyRevisionStampAndCanonicalValueFields()
+    public void Grant_HasOnlyRevisionStampDetectorIdAndCanonicalValueFields()
     {
+        // 0.4.0 (POL-L1-ONCE-R1/R2): the frozen {revision, canonical} identity is widened by exactly the detector id.
         var fields = typeof(ClipboardBypassGrant).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-        Assert.Equal(2, fields.Length);
+        Assert.Equal(3, fields.Length);
         Assert.Contains(fields, f => f.FieldType == typeof(RevisionStamp));
+        Assert.Contains(fields, f => f.FieldType == typeof(DetectorId));
         Assert.Contains(fields, f => f.FieldType == typeof(CanonicalValue));
     }
 
@@ -556,7 +559,7 @@ public class ClipboardDecisionScopeResolutionTests
         var tracker = new RevisionTracker();
         var revision = tracker.Observe(sentinel);
         var canonical = new CanonicalValue(PiiType.Phone, sentinel);
-        var grant = new ClipboardBypassGrant(revision, canonical);
+        var grant = new ClipboardBypassGrant(revision, DetectorId.Create("test.phone"), canonical);
 
         var text = grant.ToString();
 

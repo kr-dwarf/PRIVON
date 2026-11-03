@@ -115,7 +115,10 @@ namespace Privon.App;
 /// </summary>
 internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
 {
-    private readonly DetectionPipeline _pipeline;
+    // Exactly one of these two is set. The shipped constructors set _pipeline (the reused pipeline, as before); only the
+    // internal per-attempt-source constructor sets _pipelineSource.
+    private readonly DetectionPipeline? _pipeline;
+    private readonly Func<DetectionPipeline>? _pipelineSource;
     private readonly ITrustExceptionProvider _trustExceptionProvider;
     private readonly IProtectionCategorySettingsProvider _categorySettingsProvider;
     private readonly IUserExceptionProvider _userExceptionProvider;
@@ -159,6 +162,26 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(trustExceptionProvider);
         _pipeline = pipeline;
+        _trustExceptionProvider = trustExceptionProvider;
+        _categorySettingsProvider = categorySettingsProvider ?? AllOnProtectionCategorySettingsProvider.Instance;
+        _userExceptionProvider = userExceptionProvider ?? EmptyUserExceptionProvider.Instance;
+    }
+
+    /// <summary>
+    /// The pipeline is resolved at the START of every processing attempt, the same fresh-per-attempt policy every other
+    /// provider here follows. A source that throws, or returns null, fails the attempt: it is never caught, never replaced
+    /// by a previous pipeline and never reported as "no candidates". An attempt that already resolved its pipeline finishes
+    /// with that (immutable) pipeline.
+    /// </summary>
+    internal ClipboardPrivacyProcessor(
+        Func<DetectionPipeline> pipelineSource,
+        ITrustExceptionProvider trustExceptionProvider,
+        IProtectionCategorySettingsProvider? categorySettingsProvider = null,
+        IUserExceptionProvider? userExceptionProvider = null)
+    {
+        ArgumentNullException.ThrowIfNull(pipelineSource);
+        ArgumentNullException.ThrowIfNull(trustExceptionProvider);
+        _pipelineSource = pipelineSource;
         _trustExceptionProvider = trustExceptionProvider;
         _categorySettingsProvider = categorySettingsProvider ?? AllOnProtectionCategorySettingsProvider.Instance;
         _userExceptionProvider = userExceptionProvider ?? EmptyUserExceptionProvider.Instance;
@@ -220,7 +243,7 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
             // D3B0-A A.9 §7.2 site 3 -- explicit PRESENT check; ClipboardDecisionItem.Canonical
             // stays non-nullable, so an ABSENT candidate yields no decision item.
             if (candidate.Canonical is not { } itemCanonical) continue;
-            var item = new ClipboardDecisionItem(itemCanonical, candidate.RiskLevel);
+            var item = new ClipboardDecisionItem(itemCanonical, candidate.RiskLevel, candidate.DetectorId);
             if (seen.Add(item))
             {
                 items.Add(item);
@@ -242,6 +265,89 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
     }
 
     /// <summary>
+    /// ONE_REVISION_PASS (PRIVON 0.4.0, D3A POL-L1-ONCE-R1/R2): evaluates the current text exactly like <see cref="ProcessWithAssignments"/>
+    /// does -- the same detection, trust, base policy, category and user-exception stages, nothing hand-recreated -- and then applies the
+    /// scope's live one-revision passes. A candidate is allowed as typed ONLY when ALL of these hold:
+    /// <list type="number">
+    /// <item>the policy outcome of this very evaluation is <c>NeedsDecision</c> at Level 1 (a Protect, a Bypass, a Level-2 or a Level-3
+    /// candidate is never touched, and no pass is spent on it);</item>
+    /// <item>the candidate carries a detector id, and the scope holds a Level-1 item for that detector and canonical;</item>
+    /// <item>the CURRENT text's revision (the scope's own tracker, never a new one) equals the revision the pass was minted for;</item>
+    /// <item>that pass is still live, and this call is the one that removes it (<see cref="ClipboardDecisionScope.TryConsumeBypassGrant"/>
+    /// is a compare-and-swap: of any number of concurrent attempts at most one succeeds).</item>
+    /// </list>
+    /// Passing writes nothing, rewrites nothing and never produces a <see cref="ClipboardWritePlan"/>: the original text is simply left as
+    /// typed for this evaluation only. Other candidates of the same text keep their own decisions -- a pass covers exactly its own
+    /// {revision, detectorId, canonical}, never "the whole text". Consumption is the LAST step: any failure before it (detection, trust
+    /// provider, policy) propagates as an exception with the pass untouched, and nothing after consumption can throw -- a failure is never
+    /// reinterpreted as a pass. The caller holds the operation gate (the scope's tracker is single-threaded by design).
+    /// </summary>
+    internal ClipboardOneRevisionPassEvaluation EvaluateOneRevisionPass(
+        ForegroundTargetSnapshot expectedTarget, ClipboardTextSnapshot snapshot, ClipboardDecisionScope scope)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var (_, assignments) = ProcessWithAssignments(expectedTarget, snapshot);
+        var revision = scope.ObserveCurrent(snapshot.Text);
+
+        // One row per distinct identity (the decision plan's own dedup), keeping the STRICTEST policy outcome seen for it.
+        var order = new List<ClipboardDecisionItem>();
+        var strictest = new Dictionary<ClipboardDecisionItem, CandidateDisposition>();
+        foreach (var assignment in assignments ?? [])
+        {
+            var candidate = assignment.Decision.Candidate.Candidate;
+            if (candidate.Canonical is not { } canonical) continue;   // no canonical -> no identity -> no row (as BuildDecisionPlan)
+            var item = new ClipboardDecisionItem(canonical, candidate.RiskLevel, candidate.DetectorId);
+            var disposition = assignment.Decision.Disposition;
+            if (!strictest.TryGetValue(item, out var seen))
+            {
+                order.Add(item);
+                strictest[item] = disposition;
+            }
+            else if (Strictness(disposition) > Strictness(seen))
+            {
+                strictest[item] = disposition;
+            }
+        }
+
+        var rows = new List<ClipboardOneRevisionPassCandidate>(order.Count);
+        foreach (var item in order)
+        {
+            var disposition = strictest[item];
+            if (disposition == CandidateDisposition.NeedsDecision && item.RiskLevel == RiskLevel.Level1)
+            {
+                bool passed = scope.TryConsumeBypassGrant(revision, item.DetectorId, item.Canonical);
+                rows.Add(new ClipboardOneRevisionPassCandidate(
+                    item,
+                    passed ? ClipboardOneRevisionPassDisposition.AllowOriginalOnce : ClipboardOneRevisionPassDisposition.NeedsDecision,
+                    passed ? ClipboardOneRevisionPassTrust.OneRevisionPassExact : ClipboardOneRevisionPassTrust.Untrusted,
+                    PassRemainsAfter: scope.HasBypassGrant(revision, item.DetectorId, item.Canonical)));
+                continue;
+            }
+
+            rows.Add(new ClipboardOneRevisionPassCandidate(
+                item,
+                disposition switch
+                {
+                    CandidateDisposition.Protect => ClipboardOneRevisionPassDisposition.Protect,
+                    CandidateDisposition.NeedsDecision => ClipboardOneRevisionPassDisposition.NeedsDecision,   // Level 3 (or any non-Level-1)
+                    _ => ClipboardOneRevisionPassDisposition.Bypass,
+                },
+                ClipboardOneRevisionPassTrust.Untrusted,
+                PassRemainsAfter: false));
+        }
+
+        return new ClipboardOneRevisionPassEvaluation(rows);
+    }
+
+    private static int Strictness(CandidateDisposition disposition) => disposition switch
+    {
+        CandidateDisposition.Protect => 2,
+        CandidateDisposition.NeedsDecision => 1,
+        _ => 0,
+    };
+
+    /// <summary>
     /// Test-only seam (internal, never called by production code beyond <see cref="Process"/>
     /// itself): the actual chain, additionally returning the alias assignment list so a targeted
     /// App-level regression can prove real <c>AliasAssigner</c> wiring/lifetime (same-canonical
@@ -256,7 +362,10 @@ internal sealed class ClipboardPrivacyProcessor : IClipboardPrivacyProcessor
     internal (ClipboardPrivacyProcessingResult Result, IReadOnlyList<AliasAssignment>? Assignments) ProcessWithAssignments(
         ForegroundTargetSnapshot expectedTarget, ClipboardTextSnapshot snapshot)
     {
-        var detectionResult = _pipeline.Detect(snapshot.Text);
+        var pipeline = _pipeline
+            ?? _pipelineSource!()
+            ?? throw new InvalidOperationException("The detection pipeline source returned no pipeline.");
+        var detectionResult = pipeline.Detect(snapshot.Text);
 
         // NO_PII fast path (Phase 3B STEP7 audit's LOAD_TIMING finding): the trust/exception
         // provider is never touched when nothing was detected -- no DPAPI/AES-GCM/file IO, and

@@ -1257,6 +1257,7 @@ public class PrivonAppUiBridgeTests
     [
         "Verified", "보호 완료", "검증 완료", "BypassOnce", "그대로 보내기", "원문 사용",
         "예외 등록", "신뢰 등록", "VerifyAsync",
+        "Protection complete", "Verification complete", "Send as is", "Use original", "Register exception", "Trust this",
     ];
 
     [Theory]
@@ -1278,8 +1279,8 @@ public class PrivonAppUiBridgeTests
     public void TraySurface_TooltipText_IsNeutral_NeverAProtectionClaim()
     {
         var source = File.ReadAllText(FindAppSourceFile("WinFormsTrayIconSurface.cs"));
-        Assert.Contains("실행 중", source);
-        Assert.DoesNotContain("보호 중", source);
+        Assert.Contains("PRIVON — Running", source);
+        Assert.DoesNotContain("Protecting", source);
     }
 
     private static string FindAppSourceDirectory()

@@ -19,6 +19,11 @@ namespace Privon.App;
 ///   indistinguishable, sources: Level3 (any Confidence/TrustState) or Level1 non-Trusted
 ///   Confidence.Medium.
 ///
+/// 0.4.0 (POL-L1-ONCE): <see cref="DetectorId"/> is the identity of the detector that produced the candidate. A one-revision pass is
+/// bound to {revision, detectorId, canonical}, so the item that earns one must say which detector it came from. A candidate whose
+/// detector stamped no id (<c>default</c>) is still a valid item to decide, but can never earn a pass: ownership is unclear, so it fails
+/// closed. Two detectors that report the same canonical value are two items, each decided -- and passed -- on its own.
+///
 /// Deliberately excluded (each proven either fully redundant or unneeded by the STEP18 audit,
 /// not merely omitted for convenience):
 /// - <c>DetectionConfidence</c>: for a NeedsDecision candidate it is either always exactly
@@ -47,7 +52,7 @@ namespace Privon.App;
 /// (<c>CandidatePolicyDecision</c>/<c>AliasAssignment</c>'s own precedent). Never exposes the
 /// canonical value's own content, any raw text, span, hash, or fingerprint.
 /// </summary>
-internal readonly record struct ClipboardDecisionItem(CanonicalValue Canonical, RiskLevel RiskLevel)
+internal readonly record struct ClipboardDecisionItem(CanonicalValue Canonical, RiskLevel RiskLevel, DetectorId DetectorId = default)
 {
     public override string ToString() =>
         $"{nameof(ClipboardDecisionItem)} {{ PiiType = {Canonical.PiiType}, {nameof(RiskLevel)} = {RiskLevel} }}";

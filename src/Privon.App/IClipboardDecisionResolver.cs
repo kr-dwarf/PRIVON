@@ -17,4 +17,12 @@ internal interface IClipboardDecisionResolver
 {
     Task<ClipboardDecisionActionResult> ResolveAsync(
         ClipboardDecisionScope scope, ClipboardDecisionItem item, ClipboardDecisionIntent intent);
+
+    /// <summary>
+    /// The same attempt, with the context a prompt supplies when the user pressed the action while the PROMPT was the foreground window. The default
+    /// ignores the context, so an implementer that does not know it behaves exactly as before.
+    /// </summary>
+    Task<ClipboardDecisionActionResult> ResolveAsync(
+        ClipboardDecisionScope scope, ClipboardDecisionItem item, ClipboardDecisionIntent intent, DecisionPromptForegroundContext? promptContext) =>
+        ResolveAsync(scope, item, intent);
 }

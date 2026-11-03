@@ -13,6 +13,15 @@ namespace Privon.App;
 /// PII value, matching the identical PRIVACY_UI discipline already established by
 /// <see cref="DecisionPromptCoordinator.NeutralFailureMessage"/>.
 /// </summary>
+/// <summary>
+/// What the United States control shows. <see cref="Enabled"/> is the EFFECTIVE state the detection scope will follow: only a verified, stored Off is
+/// unchecked; a verified On, a missing record and every unverifiable record are checked (the pack stays active). <see cref="Basis"/> says which one it is,
+/// so the surface can say when the shown value is only the safe default. <see cref="Editable"/> is false when a change could not be stored (the stored record
+/// is of a newer version, or no usable key exists).
+/// </summary>
+internal sealed record UnitedStatesChoiceView(
+    bool Enabled, Privon.Storage.CountryChoiceState Basis, bool Editable, Privon.UsProductIntegration.UsOptInGate Gate = Privon.UsProductIntegration.UsOptInGate.NotGated);
+
 internal sealed record SettingsViewState(
     bool PhoneEnabled,
     bool EmailEnabled,
@@ -20,4 +29,5 @@ internal sealed record SettingsViewState(
     bool MasterKeyUnavailable,
     string? StatusMessage,
     NativeMessagingRegistrationReadiness ChromeNativeMessagingReadiness = NativeMessagingRegistrationReadiness.Failed,
-    NativeMessagingRegistrationReadiness EdgeNativeMessagingReadiness = NativeMessagingRegistrationReadiness.Failed);
+    NativeMessagingRegistrationReadiness EdgeNativeMessagingReadiness = NativeMessagingRegistrationReadiness.Failed,
+    UnitedStatesChoiceView? UnitedStatesChoice = null);

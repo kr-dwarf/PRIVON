@@ -80,6 +80,30 @@ internal sealed class PrivonAppUiBridge : IDisposable
     private readonly SettingsCoordinator _settingsCoordinator;
     private readonly ITrayIconSurface _traySurface;
     private readonly IDispatcherScheduler _scheduler;
+
+    // Built for every composition. The status itself is read on the UI thread at render time, so a render
+    // that runs late still shows the newest status, never the one that triggered it.
+    private readonly ClipboardProtectionStatusTracker? _protectionStatus;
+    private ProtectionStatusPresentation? _lastPresentation;
+    private bool _statusSubscribed;
+
+    /// <summary>
+    /// How long a NEW warning must last before it raises a balloon. A rewrite or read that fails and is retried successfully within a fraction of a
+    /// second (a clipboard another program briefly holds) is a recorded state and a tooltip, but not an alert: the user is told of failures that
+    /// persist, once per episode. The tooltip itself is never delayed.
+    /// </summary>
+    internal static readonly TimeSpan ProductionWarningNotifyDelay = TimeSpan.FromSeconds(2);
+
+    private readonly TimeSpan _warningNotifyDelay;
+    private readonly Func<TimeSpan, Action, IDisposable> _startTimer;
+    private IDisposable? _pendingNotifyTimer;
+    private bool _notifyPending;
+
+    // Explicit opt-in only (null in a shipped launch): the U.S. readiness the tray shows as a persistent menu line. Read on the UI thread at
+    // render time -- never cached -- together with a check that the pipeline in use can be built right now.
+    private readonly Func<UsReadinessReport>? _usReadinessSource;
+    private readonly Func<DetectionPipeline>? _usReadinessPipelineSource;
+    private bool _usReadinessSubscribed;
     private readonly WindowsAutoStartCoordinator _autoStartCoordinator;
     private readonly NativeMessagingHostRegistrationCoordinator _registrationCoordinator;
     private readonly object _gate = new();
@@ -100,7 +124,14 @@ internal sealed class PrivonAppUiBridge : IDisposable
         DetectionPipeline detectionPipeline,
         Func<bool> isMasterKeyUnavailable,
         Func<ISettingsSurface> settingsSurfaceFactory,
-        NativeMessagingHostRegistrationCoordinator registrationCoordinator)
+        NativeMessagingHostRegistrationCoordinator registrationCoordinator,
+        Func<DetectionPipeline>? settingsPipelineSource = null,
+        ClipboardProtectionStatusTracker? protectionStatus = null,
+        Func<UsReadinessReport>? usReadinessSource = null,
+        CountryChoiceService? countryChoices = null,
+        TimeSpan? warningNotifyDelay = null,
+        Func<TimeSpan, Action, IDisposable>? startTimer = null,
+        IForegroundTargetCapture? foregroundTargetCapture = null)
     {
         ArgumentNullException.ThrowIfNull(sessionPublisher);
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -117,13 +148,21 @@ internal sealed class PrivonAppUiBridge : IDisposable
         ArgumentNullException.ThrowIfNull(registrationCoordinator);
 
         _scheduler = scheduler;
+        _warningNotifyDelay = warningNotifyDelay ?? TimeSpan.Zero;
+        _startTimer = startTimer ?? StartRealTimer;
+        _protectionStatus = protectionStatus;
+        _usReadinessSource = usReadinessSource;
+        _usReadinessPipelineSource = settingsPipelineSource;
         _traySurface = traySurface;
         _autoStartCoordinator = autoStartCoordinator;
         _registrationCoordinator = registrationCoordinator;
-        _promptCoordinator = new DecisionPromptCoordinator(sessionPublisher, lifecycle, resolver, scheduler, promptSurfaceFactory);
+        _promptCoordinator = new DecisionPromptCoordinator(sessionPublisher, lifecycle, resolver, scheduler, promptSurfaceFactory, foregroundTargetCapture);
         _settingsCoordinator = new SettingsCoordinator(
             categorySettingsService, userExceptionService, detectionPipeline, isMasterKeyUnavailable, settingsSurfaceFactory,
-            registrationCoordinator);
+            registrationCoordinator, settingsPipelineSource, countryChoices);
+
+        // A stored United States choice changes what the opt-in pipeline follows: refresh the readiness line at once (a no-op without a readiness source).
+        _settingsCoordinator.CountryChoiceChanged += (_, _) => NotifyUsReadinessChanged();
     }
 
     /// <summary>The only production construction path -- wires the real
@@ -161,8 +200,17 @@ internal sealed class PrivonAppUiBridge : IDisposable
             DetectionPipeline.CreateDefault(),
             () => composition.IsMasterKeyUnavailable,
             () => new SettingsWindow(),
-            new NativeMessagingHostRegistrationCoordinator(new WindowsNativeMessagingHostRegistrationEnvironment()));
+            new NativeMessagingHostRegistrationCoordinator(new WindowsNativeMessagingHostRegistrationEnvironment()),
+            composition.DetectionPipelineSource,
+            composition.ProtectionStatus,
+            composition.UsReadinessSource,
+            composition.CountryChoices,
+            ProductionWarningNotifyDelay,
+            foregroundTargetCapture: composition.TargetCapture);
     }
+
+    private static IDisposable StartRealTimer(TimeSpan delay, Action action) =>
+        new System.Threading.Timer(_ => action(), null, delay, Timeout.InfiniteTimeSpan);
 
     /// <summary>Single-use. Subscribes the decision-prompt coordinator, wires the tray's Exit
     /// command, then shows the tray icon.
@@ -195,6 +243,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
             _traySurface.ChromeReconnectNotificationClicked += OnChromeReconnectNotificationClicked;
             _traySurface.SetAutoStartChecked(_autoStartCoordinator.IsEnabled());
             _traySurface.Show();
+            StartProtectionStatusDisplay();
+            StartUsReadinessDisplay();
         }
         catch
         {
@@ -259,6 +309,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
     // never subscribed).
     private void RollbackPartialStart()
     {
+        Safe(StopProtectionStatusDisplay);
+        Safe(StopUsReadinessDisplay);
         Safe(() => _promptCoordinator.Dispose());
         Safe(() => _settingsCoordinator.Dispose());
         Safe(() =>
@@ -278,6 +330,166 @@ internal sealed class PrivonAppUiBridge : IDisposable
         {
             // A cleanup failure here must never replace the original startup exception Start() is
             // already unwinding with.
+        }
+    }
+
+    // PROTECTION STATUS DISPLAY (every launch). The tracker raises Changed on whichever thread produced the change, so
+    // the handler only schedules a render on the UI scheduler; the render reads the newest status itself. Display failures are
+    // contained: showing a status must never reach protection processing.
+    //
+    // The tooltip follows the status at once. A WARNING BALLOON is held back for warningNotifyDelay and raised only if the warning is still there
+    // when the delay ends: a failure that the coordinator retries away (a clipboard another program briefly holds) must not alarm the user. At most
+    // one balloon is pending, it is withdrawn the moment the warning clears, and everything here runs on the UI scheduler.
+    private void StartProtectionStatusDisplay()
+    {
+        if (_protectionStatus is null || _traySurface is not IProtectionStatusSurface) return;
+
+        _protectionStatus.Changed += OnProtectionStatusChanged;
+        _statusSubscribed = true;
+        _scheduler.Post(RenderProtectionStatus);
+    }
+
+    private void StopProtectionStatusDisplay()
+    {
+        CancelPendingNotify();
+        if (!_statusSubscribed || _protectionStatus is null) return;
+        _protectionStatus.Changed -= OnProtectionStatusChanged;
+        _statusSubscribed = false;
+    }
+
+    private void OnProtectionStatusChanged(object? sender, EventArgs e) => _scheduler.Post(RenderProtectionStatus);
+
+    private void RenderProtectionStatus()
+    {
+        if (_disposed || _protectionStatus is null || _traySurface is not IProtectionStatusSurface surface) return;
+
+        var presentation = ProtectionStatusPresenter.Present(_protectionStatus.Current);
+        bool episodeStart = ProtectionStatusPresenter.ShouldNotify(_lastPresentation, presentation);
+        _lastPresentation = presentation;
+
+        if (!presentation.IsWarning) CancelPendingNotify();
+
+        bool notifyNow = false;
+        if (episodeStart)
+        {
+            if (_warningNotifyDelay <= TimeSpan.Zero) notifyNow = true;
+            else SchedulePendingNotify();
+        }
+
+        try
+        {
+            surface.SetProtectionStatus(presentation, notifyNow);
+        }
+        catch
+        {
+            // A tray that cannot display the status must not affect clipboard protection or the rest of this bridge.
+        }
+    }
+
+    private void SchedulePendingNotify()
+    {
+        if (_notifyPending) return;   // one balloon per episode: it will describe whatever the warning is when the delay ends
+        _notifyPending = true;
+        try
+        {
+            _pendingNotifyTimer = _startTimer(_warningNotifyDelay, () => _scheduler.Post(ConfirmPendingNotify));
+        }
+        catch
+        {
+            _notifyPending = false;   // no timer, no balloon: the tooltip still shows the warning
+        }
+    }
+
+    private void CancelPendingNotify()
+    {
+        _notifyPending = false;
+        var timer = _pendingNotifyTimer;
+        _pendingNotifyTimer = null;
+        try { timer?.Dispose(); } catch { }
+    }
+
+    // Runs on the UI scheduler when the delay ended. It looks at the status NOW, never at the one that started the timer.
+    private void ConfirmPendingNotify()
+    {
+        if (_disposed || !_notifyPending || _protectionStatus is null || _traySurface is not IProtectionStatusSurface surface) return;
+
+        CancelPendingNotify();
+        var presentation = ProtectionStatusPresenter.Present(_protectionStatus.Current);
+        if (!presentation.IsWarning) return;
+
+        _lastPresentation = presentation;
+        try
+        {
+            surface.SetProtectionStatus(presentation, true);
+        }
+        catch
+        {
+            // Contained, exactly like the render above.
+        }
+    }
+
+    // U.S. DETECTOR READINESS DISPLAY (explicit opt-in only: it exists only when a readiness source was supplied; a pipeline source alone shows
+    // nothing and nothing is inferred). The line is re-read, never remembered: on start, whenever the protection status changes (every attempt
+    // re-resolves the pipeline), whenever the user opens the tray menu, and whenever the owner of the authority / country setting calls
+    // NotifyUsReadinessChanged. Each render runs on the UI scheduler and reads the source when it RUNS, so a render that arrives late shows the
+    // newest state, never the one that triggered it. A source that throws, or a pipeline that cannot be built now, is shown as "cannot be
+    // determined" -- an earlier 13/13 is never left on screen. It never raises a balloon and never touches the protection status text.
+    private void StartUsReadinessDisplay()
+    {
+        if (_usReadinessSource is null || _traySurface is not IUsReadinessSurface surface) return;
+
+        surface.UsReadinessRefreshRequested += OnUsReadinessRefreshRequested;
+        if (_protectionStatus is not null) _protectionStatus.Changed += OnUsReadinessTrigger;
+        _usReadinessSubscribed = true;
+        _scheduler.Post(RenderUsReadiness);
+    }
+
+    private void StopUsReadinessDisplay()
+    {
+        if (!_usReadinessSubscribed) return;
+        if (_traySurface is IUsReadinessSurface surface) surface.UsReadinessRefreshRequested -= OnUsReadinessRefreshRequested;
+        if (_protectionStatus is not null) _protectionStatus.Changed -= OnUsReadinessTrigger;
+        _usReadinessSubscribed = false;
+    }
+
+    // The menu is about to be shown: the line is re-read RIGHT HERE, before it is displayed. The event is raised on the UI thread (WinForms'
+    // contract), so this is the same thread a posted render would use -- but a posted render may run only after the menu has painted the old
+    // text, and an old 13/13 must never be what the user sees. Reading takes the in-memory host/registry state only.
+    private void OnUsReadinessRefreshRequested(object? sender, EventArgs e) => RenderUsReadiness();
+
+    private void OnUsReadinessTrigger(object? sender, EventArgs e) => _scheduler.Post(RenderUsReadiness);
+
+    /// <summary>For the owner of the U.S. authority / country setting: something it states may have changed -- show the current state. Safe
+    /// from any thread; a no-op without a readiness source or after Dispose.</summary>
+    internal void NotifyUsReadinessChanged()
+    {
+        if (_disposed || _usReadinessSource is null) return;
+        _scheduler.Post(RenderUsReadiness);
+    }
+
+    private void RenderUsReadiness()
+    {
+        if (_disposed || _usReadinessSource is null || _traySurface is not IUsReadinessSurface surface) return;
+
+        UsReadinessPresentation presentation;
+        try
+        {
+            // The pipeline in use must be buildable right now; if the rebuild fails, no earlier "ready" can stand.
+            _ = _usReadinessPipelineSource?.Invoke();
+            presentation = UsReadinessPresenter.Present(_usReadinessSource());
+        }
+        catch
+        {
+            presentation = UsReadinessPresenter.Unknown();
+        }
+
+        try
+        {
+            surface.SetUsReadiness(presentation);
+        }
+        catch
+        {
+            // A tray that cannot display the line must not affect clipboard protection or the rest of this bridge.
         }
     }
 
@@ -334,6 +546,8 @@ internal sealed class PrivonAppUiBridge : IDisposable
             _disposed = true;
         }
 
+        Safe(StopProtectionStatusDisplay);
+        Safe(StopUsReadinessDisplay);
         _promptCoordinator.Dispose();
         _settingsCoordinator.Dispose();
 
