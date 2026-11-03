@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>Privon.UsProductIntegration</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Product contracts (IDetector, DetectionCandidate, PiiType, DetectorId, family-arbitration seam) are
+         referenced read-only. Nothing here registers a detector or touches DetectorRegistry / DetectionPipeline. -->
+    <ProjectReference Include="..\Privon.Detection\Privon.Detection.csproj" />
+    <ProjectReference Include="..\Privon.Storage\Privon.Storage.csproj" />
+    <ProjectReference Include="..\Privon.UsSsn\Privon.UsSsn.csproj" />
+    <ProjectReference Include="..\Privon.UsMbiSevis\Privon.UsMbiSevis.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The official-source authority artifact (public NANPA / USPS data, read once and kept verbatim under AuthorityData/source). Only the
+         NORMALIZED snapshots and the manifest are embedded; the verbatim sources are provenance and are not shipped in the assembly. Nothing
+         here is fetched at run time. -->
+    <EmbeddedResource Include="AuthorityData\normalized\us-npa.txt" LogicalName="Privon.UsProductIntegration.AuthorityData.us-npa.txt" />
+    <EmbeddedResource Include="AuthorityData\normalized\usps-suffix.txt" LogicalName="Privon.UsProductIntegration.AuthorityData.usps-suffix.txt" />
+    <EmbeddedResource Include="AuthorityData\normalized\usps-state.txt" LogicalName="Privon.UsProductIntegration.AuthorityData.usps-state.txt" />
+    <EmbeddedResource Include="AuthorityData\authority-manifest.json" LogicalName="Privon.UsProductIntegration.AuthorityData.authority-manifest.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets the matching test project read the closed label catalog the cores use, to check the binder range directly. -->
+    <InternalsVisibleTo Include="Privon.UsProductIntegration.Tests" />
+  </ItemGroup>
+
+</Project>
