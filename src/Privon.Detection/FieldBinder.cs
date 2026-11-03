@@ -118,7 +118,14 @@ public static class FieldBinder
                 if (c == ';') { terminator = FieldBindingTerminator.Semicolon; end = j; break; }
                 if (c == '\t') { terminator = FieldBindingTerminator.HorizontalTab; end = j; break; }
                 if (c == '|') { terminator = FieldBindingTerminator.VerticalBar; end = j; break; }
-                if (j > candidateStart && TryMatchLabel(raw, j, recognizedLabels, out _, out _))
+                // D2.2: binding ends at the START of another recognized label. That includes the very first value
+                // position: a label directly after this field's prefix makes this field empty
+                // (RejectedEmptyCandidate / NextRecognizedLabel) and that label then binds its own value, instead of
+                // being swallowed into this field's value.
+                // A label ENDS this field only where it STARTS a token: the spelling of a label inside one run of ASCII letters
+                // and digits ("HO" + "TEL" + "1234") is part of the current value, not a new field. Only the left edge is
+                // checked: D2.2 allows a value to follow a label with zero spaces and no separator ("SSN321549876").
+                if (TryMatchLabel(raw, j, recognizedLabels, out _, out _, requireTokenStart: true))
                 { terminator = FieldBindingTerminator.NextRecognizedLabel; end = j; break; }
             }
 
@@ -145,10 +152,17 @@ public static class FieldBinder
     // ASCII-case-insensitive label match. Deliberately not ToUpper/ToLower or a culture-aware
     // comparison: the Turkish dotless-i problem must not be reachable from a grammar rule.
     private static bool TryMatchLabel(
-        string raw, int at, IReadOnlyList<FieldLabel> labels, out FieldLabel matched, out int length)
+        string raw, int at, IReadOnlyList<FieldLabel> labels, out FieldLabel matched, out int length,
+        bool requireTokenStart = false)
     {
         matched = default;
         length = 0;
+
+        // requireTokenStart: a label that begins with an ASCII letter or digit and sits right after another one (a substring of a
+        // longer token, "HO|TEL|1234") begins a field only when it is explicitly delimited (see HasExplicitSeparator): that keeps
+        // "A12345678Tel: 555" two fields and "HOTEL1234" one token. The first-label match keeps no such rule: whether a label
+        // sits inside a word is the caller's decision, because it knows its own labels.
+        bool insideToken = requireTokenStart && at > 0 && IsAsciiLetterOrDigit(raw[at - 1]);
 
         // Longest match wins, so a label that is a prefix of another cannot shadow it.
         for (int k = 0; k < labels.Count; k++)
@@ -162,10 +176,26 @@ public static class FieldBinder
             for (int t = 0; t < text.Length; t++)
                 if (AsciiLower(raw[at + t]) != AsciiLower(text[t])) { ok = false; break; }
 
+            // Inside a token only a label that is EXPLICITLY delimited counts: its separator (':' '#' '=') follows it immediately,
+            // or is its own last character. Nothing else about the characters after it is checked.
+            if (ok && insideToken && IsAsciiLetterOrDigit(text[0]) && !HasExplicitSeparator(raw, at, text)) ok = false;
+
             if (ok && text.Length > length) { matched = label; length = text.Length; }
         }
         return length > 0;
     }
+
+    private static bool HasExplicitSeparator(string raw, int at, string label)
+    {
+        if (IsSeparator(label[^1])) return true;
+        int after = at + label.Length;
+        return after < raw.Length && IsSeparator(raw[after]);
+    }
+
+    private static bool IsSeparator(char c) => c == ':' || c == '#' || c == '=';
+
+    private static bool IsAsciiLetterOrDigit(char c) =>
+        (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 
     private static char AsciiLower(char c) => c >= 'A' && c <= 'Z' ? (char)(c + 32) : c;
 

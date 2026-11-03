@@ -1,4 +1,6 @@
 using Privon.Detection.Detectors;
+using Privon.Detection.Family;
+using Privon.Detection.Scope;
 
 namespace Privon.Detection;
 
@@ -25,6 +27,10 @@ public sealed class DetectionPipeline
 {
     private readonly IReadOnlyList<IDetector> _detectors;
 
+    // Non-null ONLY for the explicit opt-in constructor below. Every other constructor and CreateDefault() leave it null,
+    // so the legacy Detect path is taken exactly as before.
+    private readonly FamilyStage? _familyStage;
+
     public DetectionPipeline(IReadOnlyList<IDetector> detectors)
     {
         ArgumentNullException.ThrowIfNull(detectors);
@@ -49,6 +55,64 @@ public sealed class DetectionPipeline
         var detectors = new List<IDetector>(registry.All.Count);
         foreach (var registration in registry.All) detectors.Add(registration.Detector);
         _detectors = detectors;
+    }
+
+    /// <summary>
+    /// EXPLICIT OPT-IN. Runs the registry's detectors, the family arbitration seam and the contract
+    /// <see cref="CandidateResolver"/> instead of the legacy <see cref="OverlapResolver"/> path:
+    ///
+    ///   1. every registered detector that is NOT a member of a family runs;
+    ///   2. each family source supplies its attempts, which go through the real
+    ///      <see cref="DetectorFamilyArbitrationBoundary"/> -- a family member's own Detect is never run, so its
+    ///      output cannot be final before arbitration;
+    ///   3. only the arbiters' Emitted candidates are added (FAMILY_REJECTED_NEVER_EMITTED);
+    ///   4. <see cref="CandidateResolver"/> resolves the combined set (span validation, value-domain validation,
+    ///      exact duplicates, overlaps), then <see cref="ContextRiskAdjuster"/> runs as in the legacy path.
+    ///
+    /// FAIL CLOSED: an unregistered or not-ready detector (queried at use), an unavailable arbiter, a null arbiter
+    /// result and any detector, source or arbiter failure surface as exceptions. A completed scan with nothing to
+    /// report is an empty <see cref="DetectionResult"/>; it is never produced for a failed scan.
+    ///
+    /// Nothing activates by constructing this: the caller supplies every detector, source and provider, and the
+    /// default pipeline (<see cref="CreateDefault"/>) is unchanged.
+    /// </summary>
+    public DetectionPipeline(
+        DetectorRegistry registry,
+        IDetectorFamilyArbiterProvider familyArbiterProvider,
+        IReadOnlyList<IDetectorFamilyAttemptSource> familySources)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(familyArbiterProvider);
+        ArgumentNullException.ThrowIfNull(familySources);
+
+        _detectors = [];
+        _familyStage = new FamilyStage(registry, familyArbiterProvider, familySources, []);
+    }
+
+    /// <summary>
+    /// The explicit opt-in constructor plus per-country execution scopes. A country whose scope carries
+    /// <see cref="CountrySettingObservation.AuthenticatedOff"/> is stopped: the registered detectors the approved ownership
+    /// table assigns to it are not run and not readiness-checked, and a family source whose members it owns is not collected,
+    /// arbitrated or validated. Every other observation, and every country with no scope, runs in full. Detectors with no
+    /// approved owner (Global Core, legacy Korean) always run. The order of the scopes, detectors and requirements never
+    /// changes the result; two scopes for one pack are refused.
+    ///
+    /// The setting itself (authentication, storage, versioning, migration) is NOT part of this type: the caller passes what a
+    /// trusted layer observed. Nothing in the product produces such an observation yet.
+    /// </summary>
+    public DetectionPipeline(
+        DetectorRegistry registry,
+        IDetectorFamilyArbiterProvider familyArbiterProvider,
+        IReadOnlyList<IDetectorFamilyAttemptSource> familySources,
+        IReadOnlyList<CountryPackScope> countryScopes)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(familyArbiterProvider);
+        ArgumentNullException.ThrowIfNull(familySources);
+        ArgumentNullException.ThrowIfNull(countryScopes);
+
+        _detectors = [];
+        _familyStage = new FamilyStage(registry, familyArbiterProvider, familySources, countryScopes);
     }
 
     /// <summary>
@@ -79,6 +143,9 @@ public sealed class DetectionPipeline
         // modified, and no detector gets its own NormalizedView.
         var view = NormalizedView.Build(rawText);
         var context = new DetectionContext(view);
+
+        // Explicit opt-in only (see the registry + family constructor). The legacy path below is untouched.
+        if (_familyStage is not null) return _familyStage.Detect(rawText, view, context);
 
         var collected = new List<DetectionCandidate>();
         foreach (var detector in _detectors)
@@ -119,5 +186,202 @@ public sealed class DetectionPipeline
         var adjusted = ContextRiskAdjuster.Adjust(view, resolved);
 
         return new DetectionResult(adjusted);
+    }
+
+    /// <summary>
+    /// The opt-in execution stage. Held in a nested class so the legacy members above are not interleaved with it.
+    /// </summary>
+    private sealed class FamilyStage
+    {
+        private sealed record Family(
+            IDetectorFamilyAttemptSource Source, string Name, IReadOnlyList<DetectorId> Members, CountryPack? Owner);
+
+        private sealed record Scope(
+            CountryPack Pack, bool Active, IReadOnlyList<DetectorId> RequiredDetectors, IReadOnlyList<string> RequiredFamilies);
+
+        private readonly DetectorRegistry _registry;
+        private readonly IDetectorFamilyArbiterProvider _provider;
+        private readonly IReadOnlyList<Family> _families;
+        private readonly IReadOnlyList<Scope> _scopes;
+        private readonly HashSet<string> _memberIds = new(StringComparer.Ordinal);
+
+        public FamilyStage(
+            DetectorRegistry registry, IDetectorFamilyArbiterProvider provider, IReadOnlyList<IDetectorFamilyAttemptSource> sources,
+            IReadOnlyList<CountryPackScope> countryScopes)
+        {
+            _registry = registry;
+            _provider = provider;
+            _scopes = SnapshotScopes(countryScopes);
+
+            // Names and members are read ONCE and snapshotted, as DetectorRegistry does for ids and ranks.
+            var families = new List<Family>(sources.Count);
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var source in sources)
+            {
+                ArgumentNullException.ThrowIfNull(source);
+
+                string name = source.FamilyName;
+                if (string.IsNullOrWhiteSpace(name))
+                    throw new ArgumentException("A family source must name its family.", nameof(sources));
+                if (!names.Add(name))
+                    throw new ArgumentException("Two family sources cannot share one family name.", nameof(sources));
+
+                var members = source.MemberDetectorIds?.ToArray()
+                    ?? throw new ArgumentException("A family source must list its member detectors.", nameof(sources));
+                foreach (var member in members)
+                {
+                    if (!member.HasValue || !_memberIds.Add(member.Value))
+                        throw new ArgumentException("A detector cannot belong to two families, nor appear twice.", nameof(sources));
+                }
+
+                families.Add(new Family(source, name, members, OwnerOf(members)));
+            }
+
+            _families = families;
+        }
+
+        // A family belongs to a country only when EVERY member has the same approved owner; unowned members make it
+        // unowned (always active); a mixture is ambiguous and refused rather than guessed.
+        private static CountryPack? OwnerOf(IReadOnlyList<DetectorId> members)
+        {
+            CountryPack? owner = null;
+            bool anyUnowned = false;
+            foreach (var member in members)
+            {
+                if (DetectorCountryOwnership.TryGetOwner(member, out var memberOwner))
+                {
+                    if (owner is not null && owner != memberOwner)
+                        throw new ArgumentException("A family cannot straddle two countries.", "sources");
+                    owner = memberOwner;
+                }
+                else
+                {
+                    anyUnowned = true;
+                }
+            }
+
+            if (owner is not null && anyUnowned)
+                throw new ArgumentException("A family cannot mix owned and unowned member detectors.", "sources");
+            return owner;
+        }
+
+        private static IReadOnlyList<Scope> SnapshotScopes(IReadOnlyList<CountryPackScope> countryScopes)
+        {
+            var scopes = new List<Scope>(countryScopes.Count);
+            var packs = new HashSet<CountryPack>();
+            foreach (var scope in countryScopes)
+            {
+                ArgumentNullException.ThrowIfNull(scope);
+                if (!Enum.IsDefined(scope.Pack))
+                    throw new ArgumentOutOfRangeException(nameof(countryScopes), "Undefined country pack.");
+                if (!Enum.IsDefined(scope.Setting))
+                    throw new ArgumentOutOfRangeException(nameof(countryScopes), "Undefined country setting observation.");
+                ArgumentNullException.ThrowIfNull(scope.RequiredDetectorIds);
+                ArgumentNullException.ThrowIfNull(scope.RequiredFamilyNames);
+                if (!packs.Add(scope.Pack))
+                    throw new ArgumentException("Two scopes for one country pack are ambiguous.", nameof(countryScopes));
+
+                var required = scope.RequiredDetectorIds.ToArray();
+                foreach (var id in required)
+                {
+                    if (!DetectorCountryOwnership.TryGetOwner(id, out var owner) || owner != scope.Pack)
+                        throw new ArgumentException("A required detector must be owned by the scope country pack.", nameof(countryScopes));
+                }
+
+                var families = scope.RequiredFamilyNames.ToArray();
+                foreach (var name in families)
+                {
+                    if (string.IsNullOrWhiteSpace(name))
+                        throw new ArgumentException("A required family name cannot be blank.", nameof(countryScopes));
+                }
+
+                // FAIL_TOWARD_PROTECTION: AuthenticatedOff is the only value that stops a pack.
+                scopes.Add(new Scope(scope.Pack, scope.Setting != CountrySettingObservation.AuthenticatedOff, required, families));
+            }
+
+            return scopes;
+        }
+
+        private bool IsStoppedPack(CountryPack pack) => _scopes.Any(s => s.Pack == pack && !s.Active);
+
+        private bool IsStopped(DetectorId id) =>
+            DetectorCountryOwnership.TryGetOwner(id, out var owner) && IsStoppedPack(owner);
+
+        private bool IsStopped(Family family) => family.Owner is { } owner && IsStoppedPack(owner);
+
+        public DetectionResult Detect(string rawText, NormalizedView view, DetectionContext context)
+        {
+            // Readiness is queried at use, never cached: every detector that is part of this scan (registered, not stopped by
+            // an authenticated-OFF country) and every active country requirement must be registered and Ready, or the scan
+            // fails (never a silently smaller scan). A stopped country is not consulted at all.
+            var required = new List<DetectorId>(_registry.All.Count + _memberIds.Count);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void Require(DetectorId id)
+            {
+                if (seen.Add(id.Value)) required.Add(id);
+            }
+
+            foreach (var registration in _registry.All)
+            {
+                if (!IsStopped(registration.Id)) Require(registration.Id);
+            }
+
+            foreach (var family in _families)
+            {
+                if (IsStopped(family)) continue;
+                foreach (var member in family.Members) Require(member);
+            }
+
+            foreach (var scope in _scopes)
+            {
+                if (!scope.Active) continue;
+                foreach (var id in scope.RequiredDetectors) Require(id);
+            }
+
+            RequiredDetectorPrecondition.Assert(required, _registry);
+
+            // An active country required families must have a source of their own that is going to run.
+            foreach (var scope in _scopes)
+            {
+                if (!scope.Active) continue;
+                foreach (var name in scope.RequiredFamilies)
+                {
+                    if (!_families.Any(f => f.Name == name && !IsStopped(f)))
+                        throw new FamilyArbitrationUnavailableException(name);
+                }
+            }
+
+            var collected = new List<DetectionCandidate>();
+
+            // 1. Every registered detector that is neither a family member nor stopped (registry order is rank ascending: an
+            //    execution detail only, never a tiebreaker). An exception from any of them propagates.
+            foreach (var registration in _registry.All)
+            {
+                if (_memberIds.Contains(registration.Id.Value) || IsStopped(registration.Id)) continue;
+                collected.AddRange(registration.Detector.Detect(context));
+            }
+
+            // 2. Each running family: attempts -> the real boundary. Only the arbiter Emitted list is used.
+            foreach (var family in _families)
+            {
+                if (IsStopped(family)) continue;
+
+                var attempts = family.Source.CollectAttempts(context);
+                ArgumentNullException.ThrowIfNull(attempts);
+
+                if (!DetectorFamilyArbitrationBoundary.TryArbitrate(_provider, family.Name, attempts, out var arbitration, out _))
+                    throw new FamilyArbitrationUnavailableException(family.Name);
+
+                collected.AddRange(arbitration!.Emitted);
+            }
+
+            // 3. The contract resolver, strictly after arbitration (R0 span validation, R0.5 value domains, exact
+            //    duplicates, overlaps); it never reads the order of its input.
+            var resolved = CandidateResolver.Resolve(new ResolutionInput(collected, rawText.Length));
+
+            // 4. The same post-resolution stage the legacy path applies.
+            return new DetectionResult(ContextRiskAdjuster.Adjust(view, resolved.Winners));
+        }
     }
 }
