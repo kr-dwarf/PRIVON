@@ -114,6 +114,10 @@ PRIVON이 현재 감지·보호를 시도하는 항목은 다음과 같습니다
 이 확인 창이 제공하는 동작은 **모두 보호(Protect All)** 한 가지뿐입니다. 버튼을
 누르면 확인이 필요한 항목이 모두 보호된 뒤 창이 닫힙니다.
 
+확인 창에는 "Personal information detected. Select Protect All to protect the clipboard
+content."라고 표시됩니다. 현재 PRIVON의 화면 문구(Settings, 트레이 메뉴, 이 창)는 영어로
+표시되며, 한국어/영어 선택 기능은 별도로 제공할 계획입니다.
+
 ---
 
 ## 설정(Settings)
@@ -127,6 +131,7 @@ PRIVON 트레이 아이콘을 마우스 오른쪽 버튼으로 클릭 → **Sett
   보호하지 않을 특정 값)
 - 보호 범위를 기본값(모든 항목 켜짐)으로 초기화
 - 예외 목록 초기화
+- 미국 개인정보 탐지 켜기/끄기 (직접 켜기 전에는 꺼져 있습니다. 아래 참고)
 - 설정한 값은 로컬에 저장되며 재시작 후에도 유지됩니다
 - PRIVON의 암호화된 로컬 저장소를 현재 사용할 수 없는 경우, 설정 변경이 저장된 것처럼
   거짓으로 표시하지 않고 이 저하된(degraded) 상태를 정직하게 보여줍니다
@@ -135,6 +140,24 @@ PRIVON 트레이 아이콘을 마우스 오른쪽 버튼으로 클릭 → **Sett
 그 자체의 설정 항목이 없습니다 — 켜고 끌 대상이 없습니다. 설정에는 이미 적용한 변경을
 되돌리는 Undo/Restore 기능이 없습니다 — 초기화는 기본값으로 되돌릴 뿐, 이력을 단계별로
 되돌리지 않습니다.
+
+### 미국 개인정보 탐지 (선택 사항, 기본 꺼짐)
+
+미국 탐지는 새로 설치해도, 업데이트해도 **자동으로 켜지지 않습니다.** 켜려면 Settings에서
+**Country Scope** 항목의 **United States personal information detection** 체크박스를 직접
+선택합니다. 켜기 전에는 트레이 메뉴에 "U.S. Detection: Not Enabled (Korean and Global
+detection remain active)"가 표시되고 미국 탐지기는 실행되지 않습니다. 켜면 미국 SSN/ITIN/ATIN,
+MBI, SEVIS, 여권, A-Number, I-94, 운전면허·주 ID, 은행 계좌, 전화번호, 주소, 이름도 탐지하며,
+민감도가 높은 값(예: SSN)은 한국 값처럼 먼저 사용자 확인을 받습니다. 체크를 해제하면 다시
+꺼지고, 어느 쪽이든 한국·Global 탐지는 영향을 받지 않으며 선택은 재시작 후에도 유지됩니다.
+
+- "U.S. Detection: 13/13 Ready (Verified Official Sources)"는 탐지기와 공식 자료가 실행
+  준비되었다는 뜻일 뿐, 복사한 내용이 보호되었다거나 전송이 안전하다는 뜻이 아닙니다.
+- 저장된 활성화 기록이나 공식 자료를 PRIVON이 검증하지 못하면 미국 탐지는 꺼진 채로
+  유지되고 Settings와 트레이가 그렇게 표시합니다("Enablement Record Unverifiable" /
+  "Unavailable"). 이는 사용자가 끈 것이 아니며, Settings에서 다시 켤 수 있습니다.
+- 미국 값에 대해서도 PRIVON이 쓰는 대체 라벨은 여전히 한국어입니다(예: 전화번호는
+  `[전화번호1]`). 현재 동작입니다.
 
 ### Chrome 연결 및 다시 연결
 
@@ -166,8 +189,29 @@ PRIVON은 다음을 보장하거나 주장하지 않습니다.
 - 지원 대상으로 명시된 것 이외의 모든 식별정보에 대한 탐지
 - ChatGPT와의 네트워크 통신 가로채기/감시
 - 메시지 자동 전송
-- 키보드로 직접 입력하는 경로(direct composer typing)에 대한 보호 — PRIVON이 공식적으로
-  보장하는 경로는 **클립보드 경로**입니다.
+- 키보드로 직접 입력하는 경로(direct composer typing)에 대한 보호, 그리고 어떤 형태의 전송
+  차단 — PRIVON이 공식적으로 보장하는 경로는 **클립보드 경로**입니다. PRIVON은 Enter,
+  마우스로 Send 버튼 클릭, 붙여넣기, 그 밖의 어떤 전송 방식도 가로채거나 막지 않으며, 출고된
+  애플리케이션에는 그런 동작을 시도하는 코드가 없습니다. 이 저장소의 `tools/UiaInspector`는
+  연구용 스파이크이고 출고 제품이 아니며, 실측에서 전송을 안정적으로 막지 못했습니다
+  ([docs/threat-model.md](docs/threat-model.md) 참고).
+- 지속적인 "안전" 또는 "검증됨" 상태. 트레이 아이콘 툴팁(현재 영어로 표시됩니다)은 PRIVON이
+  마지막으로 처리한 클립보드 텍스트의 상태를 보여 주며, 다음 클립보드 변경이 있으면
+  바뀝니다(예: "PRIVON — Scanning, not yet protected", "PRIVON — Awaiting your decision, not
+  yet protected", "PRIVON — Last rewrite to protected form verified", "PRIVON — Protection
+  unconfirmed, original may remain"). "verified"는 PRIVON이 그 클립보드 텍스트를 재작성한 뒤
+  다시 읽어 확인했다는 뜻일 뿐, 붙여넣기나 전송이 차단되었거나 안전하다는 뜻이 아니며,
+  직접 입력한 내용이나 앞으로 붙여넣을 내용에 대해서는 아무것도 말하지 않습니다. 보호 단계가
+  실패하고 그 실패가 몇 초 이상 이어지면 PRIVON은 보호가 확인되지 않았고 원문이 클립보드에
+  남아 있을 수 있다는 경고 알림을 한 번 표시하지만, 아무것도 차단하지 않습니다. PRIVON은
+  지원하는 애플리케이션에서 복사한 클립보드 텍스트만 검사합니다. 그 밖의 곳에서 복사한
+  내용(또는 텍스트가 아닌 내용)은 검사하지 않으며, 툴팁은 검사가 끝났다고 하지 않고 "PRIVON —
+  Copied from unsupported app, not scanned"라고 표시합니다. 아직 아무것도 복사하지 않았다면
+  "PRIVON — Running, nothing scanned yet"이라고 표시합니다. "검사하지 않음"과 "차단하지
+  않음"은 서로 다른 사실이며, 어느 쪽이든 PRIVON은 아무것도 차단하지 않습니다. 항목을 원문
+  그대로 두기로 선택하면 툴팁은 "PRIVON — Original kept by choice, item not protected"라고
+  표시하며, 이를 처리가 끝났다거나 보호되었다거나 검증되었다고 표현하지 않고 일회 허용이
+  사용되었다고도 주장하지 않습니다. 트레이 상태는 표시일 뿐 보장이 아닙니다.
 - "붙여넣은 내용이 실제로 보호본과 일치하는지" 확인하는 내부 검증 기능은 존재하지만,
   공개 기능으로 노출되어 있지 않습니다.
 
