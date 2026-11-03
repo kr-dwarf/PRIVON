@@ -1,0 +1,59 @@
+name: Discord CodeQL Notification
+
+on:
+  workflow_run:
+    workflows: ["CodeQL"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send CodeQL result to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_PRIVON_ALERT_WEBHOOK }}
+          RESULT: ${{ github.event.workflow_run.conclusion }}
+          RUN_NAME: ${{ github.event.workflow_run.display_title }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+        run: |
+          case "$RESULT" in
+            success)
+              ICON="✅"
+              STATUS="SUCCESS"
+              ;;
+            failure)
+              ICON="❌"
+              STATUS="FAILURE"
+              ;;
+            cancelled)
+              ICON="⚠️"
+              STATUS="CANCELLED"
+              ;;
+            *)
+              ICON="ℹ️"
+              STATUS="$RESULT"
+              ;;
+          esac
+
+          jq -n \
+            --arg content "$ICON **PRIVON CodeQL — $STATUS**
+
+          **Run:** $RUN_NAME
+          **Branch:** $BRANCH
+          **Actor:** $ACTOR
+          **Details:** $RUN_URL" \
+            '{content: $content}' \
+          | curl \
+              --fail \
+              --silent \
+              --show-error \
+              -H "Content-Type: application/json" \
+              -d @- \
+              "$DISCORD_WEBHOOK"
