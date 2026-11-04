@@ -7,9 +7,11 @@
 **PRIVON — AI를 쓰기 전, 개인정보 보호를 켜다.**
 
 > PRIVON은 실사용 환경에서의 검증을 위해 배포되는 공개 베타입니다. 1.0 수준의 안정성을
-> 보장하지는 않습니다. 이 문서는 릴리스 최종 확인 중인 v0.3.2 후보를 설명합니다.
-> v0.3.2가 공개 게시되었다는 뜻은 아닙니다. 검증된 상태는
-> [공개 기록](#공개-기록)을 참고하세요.
+> 보장하지는 않습니다. 이 문서는 v0.4.0-beta 릴리스 계열을 설명합니다. 이전 버전인
+> v0.3.2-beta는 이미 GitHub에 공개되었습니다. 이 문서는 v0.4.0-beta가 공개 게시되었다고
+> 주장하지 않습니다. 실제로 공개된 릴리스는
+> [GitHub Releases](https://github.com/kr-dwarf/PRIVON/releases) 페이지에서 확인하세요.
+> 검증된 상태는 [공개 기록](#공개-기록)을 참고하세요.
 
 ---
 
@@ -70,7 +72,9 @@ PRIVON은 Windows용 로컬 우선(local-first) 개인정보 보호 유틸리티
 
 ## 지원 범위
 
-- Windows 10 / 11 (64비트, win-x64)
+- Windows 11 (64비트, win-x64) — v0.4.0-beta의 공식 QA 대상입니다. 이전 베타 릴리스는
+  Windows 10 / 11로 기록되었으며, v0.4.0-beta에 대해 Windows 10 검증을 새로 주장하지
+  않습니다.
 - 데스크톱 대상: 현재 허용된 **ChatGPT Windows Desktop Microsoft Store 패키지 ID**와
   인증된 **Claude Desktop** 앱. 이름만 비슷한 실행 파일과 인식되지 않는 ID는 허용하지 않습니다.
 - Chrome 웹 대상: 승인된 PRIVON Chrome 확장 프로그램과 인증된 로컬 연결을 통해 접근한
@@ -262,7 +266,7 @@ Native Messaging 등록 전체를 제거하는 일반 삭제 기능을 제공하
 `PRIVON.exe` 또는 폴더만 삭제하면 Windows 자동 시작 등록, Chrome Native Messaging 등록과
 manifest, `%LocalAppData%\PRIVON`의 암호화된 로컬 상태, 진단을 켰을 때 생성된 로그, 설치된
 Chrome 확장 프로그램과 브라우저 관리 상태가 남을 수 있습니다. 확장 프로그램은 Chrome에서
-제거합니다. 로컬 파일과 남은 소유 등록은 수동 정리가 필요할 수 있습니다. v0.3.2에는 설치
+제거합니다. 로컬 파일과 남은 소유 등록은 수동 정리가 필요할 수 있습니다. v0.4.0-beta 계열(및 v0.3.2-beta)에는 설치
 프로그램이나 제거 프로그램이 없습니다.
 
 ---
@@ -304,7 +308,8 @@ Issue 또는 Discussions 탭으로 알려주세요.
 
 ### 요구 사항
 
-- Windows 10/11
+- Windows 11 x64 (v0.4.0-beta의 공식 QA 대상이며, 이전 릴리스는 Windows 10/11로
+  기록되었습니다)
 - .NET 10 SDK
 
 ### 복원 / 빌드 / 테스트
@@ -342,10 +347,10 @@ tree가 clean한지 검사하고, 정확한 Git commit에 고정된 격리된 de
 ZIP + SHA-256 체크섬을 생성합니다. `-Version`은 필수이며 기본값이 없습니다.
 
 ```powershell
-.\tools\publish-release.ps1 -Version 0.3.2
+.\tools\publish-release.ps1 -Version "0.4.0-beta"
 ```
 
-(위 명령은 호출 형태를 보여줍니다. 이 README는 인증된 v0.3.2 데스크톱 릴리스 패키지가
+(위 명령은 호출 형태를 보여줍니다. 이 README는 인증된 v0.4.0-beta 데스크톱 릴리스 패키지가
 이미 공개되었다고 주장하지 않습니다.)
 
 ---
@@ -394,12 +399,21 @@ ZIP + SHA-256 체크섬을 생성합니다. `-Version`은 필수이며 기본값
 
 - 이전 후보 기록으로 보존합니다.
 
-**v0.3.2 후보**
+**v0.3.2-beta**
 
-- 현재 소스는 릴리스 최종 확인 중이며, 공개 게시되었다는 뜻은 아닙니다.
+- GitHub Releases에 2026년 9월 14일 공개되었습니다(pre-release).
+- tag 대상 commit: `a575b49`
 - Chrome Web Store 0.3.2 패키지는 자동 게시를 끈 상태로 심사 제출되었습니다.
 - 제출 패키지의 정확한 provenance는
   [`docs/release-0.3.2-store-provenance.md`](./docs/release-0.3.2-store-provenance.md)에 기록합니다.
+
+**v0.4.0-beta**
+
+- 릴리스 준비 중인 계열이며 소스 브랜치는 `release/v0.4.0-beta`입니다. 공개 게시되었다는
+  뜻은 아닙니다.
+- 공개 여부는 [GitHub Releases](https://github.com/kr-dwarf/PRIVON/releases)에서
+  확인하세요. 패키지 SHA-256과 tag 대상 commit은 실제 공개가 이뤄진 뒤에만 여기에
+  기록합니다.
 
 ---
 

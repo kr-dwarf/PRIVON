@@ -7,9 +7,12 @@
 **PRIVON — turn on privacy protection before you use AI.**
 
 > PRIVON is a public beta, distributed for real-world validation. It does not claim
-> 1.0-level stability. This document describes the v0.3.2 candidate while release
-> finalization is in progress. It does not claim that v0.3.2 has been publicly published;
-> see [Release provenance](#release-provenance) for the verified release state.
+> 1.0-level stability. This document describes the v0.4.0-beta release line. The earlier
+> v0.3.2-beta has already been published on GitHub. This document does not claim that
+> v0.4.0-beta has been publicly published; check the
+> [GitHub Releases](https://github.com/kr-dwarf/PRIVON/releases) page for the releases that are
+> actually published, and see [Release provenance](#release-provenance) for the verified
+> release state.
 
 ---
 
@@ -79,7 +82,9 @@ not the original phone number.
 
 ## Supported Scope
 
-- Windows 10 / 11 (64-bit, win-x64)
+- Windows 11 (64-bit, win-x64) — the official QA target for v0.4.0-beta. Earlier beta
+  releases documented Windows 10 / 11; no new Windows 10 verification is claimed for
+  v0.4.0-beta.
 - Desktop targets: the currently authorized **ChatGPT Windows Desktop Microsoft Store
   package identity** and the authenticated **Claude Desktop** application. Name-only
   lookalikes and unrecognized identities are not accepted.
@@ -304,7 +309,7 @@ Chrome Native Messaging registration and manifest, encrypted product-local state
 `%LocalAppData%\PRIVON`, opt-in diagnostic logs if diagnostics were enabled, and the
 installed Chrome extension and its browser-managed state. Browser extension removal is
 performed in Chrome. Product-local files and any remaining owned registration may require
-manual cleanup. There is no installer or uninstaller in v0.3.2.
+manual cleanup. There is no installer or uninstaller in the v0.4.0-beta line (nor in v0.3.2-beta).
 
 ---
 
@@ -347,7 +352,8 @@ problem, please let us know via a GitHub Issue or the Discussions tab.
 
 ### Requirements
 
-- Windows 10/11
+- Windows 11 x64 (the official QA target for v0.4.0-beta; earlier releases documented
+  Windows 10/11)
 - .NET 10 SDK
 
 ### Restore / Build / Test
@@ -386,11 +392,11 @@ local user data files), and only then produces a ZIP + SHA-256 checksum. `-Versi
 required — there is no default:
 
 ```powershell
-.\tools\publish-release.ps1 -Version 0.3.2
+.\tools\publish-release.ps1 -Version "0.4.0-beta"
 ```
 
 (The command above shows the invocation shape. This README does not claim that a certified
-v0.3.2 desktop release package has been published.)
+v0.4.0-beta desktop release package has been published.)
 
 ---
 
@@ -440,12 +446,21 @@ mean "works perfectly in every environment."
 
 - Historical candidate; retained here as an earlier provenance record.
 
-**v0.3.2 candidate**
+**v0.3.2-beta**
 
-- Current source is in release finalization; this is not a claim of public publication.
+- Published on GitHub Releases on September 14, 2026 (pre-release).
+- Tagged commit: `a575b49`
 - The Chrome Web Store 0.3.2 package was submitted for review with auto-publish disabled.
 - Exact submitted-package provenance is recorded in
   [`docs/release-0.3.2-store-provenance.md`](./docs/release-0.3.2-store-provenance.md).
+
+**v0.4.0-beta**
+
+- Release line in preparation; source branch `release/v0.4.0-beta`. This is not a claim of
+  public publication.
+- Check [GitHub Releases](https://github.com/kr-dwarf/PRIVON/releases) for whether it has
+  been published. A package SHA-256 and tagged commit will be recorded here only after a
+  real publication.
 
 ---
 
