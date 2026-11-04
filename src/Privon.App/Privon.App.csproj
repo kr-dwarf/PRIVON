@@ -20,6 +20,7 @@
     <ProjectReference Include="..\Privon.Core\Privon.Core.csproj" />
     <ProjectReference Include="..\Privon.Detection\Privon.Detection.csproj" />
     <ProjectReference Include="..\Privon.Storage\Privon.Storage.csproj" />
+    <ProjectReference Include="..\Privon.UsProductIntegration\Privon.UsProductIntegration.csproj" />
     <ProjectReference Include="..\Privon.Windows\Privon.Windows.csproj" />
   </ItemGroup>
 

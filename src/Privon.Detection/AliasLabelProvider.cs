@@ -35,6 +35,20 @@ public static class AliasLabelProvider
         PiiType.IpAddress => "IP주소",
         PiiType.MacAddress => "MAC주소",
         PiiType.GpsCoordinate => "GPS좌표",
+        // ---- appended by D3B0 (A.9 §22.3). The nine above are unchanged; this provider and
+        // ---- AliasFamilyTable.FrozenTokenStem hold the SAME frozen stems for all 21 types.
+        PiiType.Name => "이름",
+        PiiType.Address => "주소",
+        PiiType.UsSsn => "SSN",
+        PiiType.UsItin => "ITIN",
+        PiiType.UsAtin => "ATIN",
+        PiiType.UsMbi => "MBI",
+        PiiType.UsPassport => "여권번호",
+        PiiType.UsANumber => "A-NUMBER",
+        PiiType.UsI94 => "I-94",
+        PiiType.UsSevis => "SEVIS",
+        PiiType.UsDriverStateId => "운전면허번호",
+        PiiType.BankAccount => "계좌",
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "No alias label is defined for this PiiType."),
     };
 }

@@ -24,7 +24,7 @@ public class GpsCoordinateDetectorTests
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level2, results[0].RiskLevel);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal("37.5665,126.978", results[0].Canonical.Value);
+        Assert.Equal("37.5665,126.978", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 2. 위도/경도 한글 문맥 ----
@@ -55,7 +55,7 @@ public class GpsCoordinateDetectorTests
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level2, results[0].RiskLevel);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal("37.5665,126.978", results[0].Canonical.Value);
+        Assert.Equal("37.5665,126.978", CanonicalAssert.Text(results[0]));
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class GpsCoordinateDetectorTests
     {
         var results = Detect("좌표: 33.8688S 151.2093W 확인");
         Assert.Single(results);
-        Assert.Equal("-33.8688,-151.2093", results[0].Canonical.Value);
+        Assert.Equal("-33.8688,-151.2093", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 5/6. latitude boundary ----
@@ -131,8 +131,8 @@ public class GpsCoordinateDetectorTests
     [Fact]
     public void TrailingZeros_SameCanonicalValue()
     {
-        var padded = Detect("lat=37.566500, lon=126.978000")[0].Canonical;
-        var bare = Detect("lat=37.5665, lon=126.978")[0].Canonical;
+        var padded = CanonicalAssert.Present(Detect("lat=37.566500, lon=126.978000")[0]);
+        var bare = CanonicalAssert.Present(Detect("lat=37.5665, lon=126.978")[0]);
         Assert.Equal(bare, padded);
     }
 
@@ -140,8 +140,8 @@ public class GpsCoordinateDetectorTests
     [Fact]
     public void LeadingPlusSign_SameCanonicalValue()
     {
-        var signed = Detect("lat=+37.5665, lon=+126.9780")[0].Canonical;
-        var unsigned = Detect("lat=37.5665, lon=126.9780")[0].Canonical;
+        var signed = CanonicalAssert.Present(Detect("lat=+37.5665, lon=+126.9780")[0]);
+        var unsigned = CanonicalAssert.Present(Detect("lat=37.5665, lon=126.9780")[0]);
         Assert.Equal(unsigned, signed);
     }
 
@@ -149,8 +149,8 @@ public class GpsCoordinateDetectorTests
     [Fact]
     public void DifferentPrecision_DoesNotCollapseToSameCanonicalValue()
     {
-        var precise = Detect("lat=37.5665001, lon=126.9780")[0].Canonical;
-        var rounded = Detect("lat=37.5665, lon=126.9780")[0].Canonical;
+        var precise = CanonicalAssert.Present(Detect("lat=37.5665001, lon=126.9780")[0]);
+        var rounded = CanonicalAssert.Present(Detect("lat=37.5665, lon=126.9780")[0]);
         Assert.NotEqual(rounded, precise);
     }
 
@@ -167,7 +167,7 @@ public class GpsCoordinateDetectorTests
         var span = results[0].Span;
         var expected = latPart + ", lon=126.9780";
         Assert.Equal(expected, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("37.5665,126.978", results[0].Canonical.Value);
+        Assert.Equal("37.5665,126.978", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 16/17. bare unlabeled pair: kept as Level1 (ambiguous), never dropped, never Level2 ----
@@ -201,7 +201,7 @@ public class GpsCoordinateDetectorTests
         var results = Detect("lon=126.9780 lat=37.5665");
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level2, results[0].RiskLevel);
-        Assert.Equal("37.5665,126.978", results[0].Canonical.Value);
+        Assert.Equal("37.5665,126.978", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 19. general statistic/amount pairs are not GPS candidates ----

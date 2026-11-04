@@ -97,8 +97,8 @@ public class LocalProtectionChainIntegrationTests
 
         // If the real PhoneCanonicalizer ever stopped collapsing these two formats onto the
         // same CanonicalValue, this assertion -- not a hand-tuned alias -- is what must fail.
-        Assert.Equal("01012345678", run.Detection.Candidates[0].Canonical.Value);
-        Assert.Equal("01012345678", run.Detection.Candidates[1].Canonical.Value);
+        Assert.Equal("01012345678", CanonicalAssert.Text(run.Detection.Candidates[0]));
+        Assert.Equal("01012345678", CanonicalAssert.Text(run.Detection.Candidates[1]));
         Assert.Equal("[전화번호1] 및 [전화번호1]", run.RewrittenText);
     }
 
@@ -366,7 +366,7 @@ public class LocalProtectionChainIntegrationTests
         Assert.Equal(PiiType.Phone, phoneCandidate.PiiType);
         Assert.Equal(RiskLevel.Level2, phoneCandidate.RiskLevel);
         Assert.Equal(DetectionConfidence.High, phoneCandidate.Confidence);
-        Assert.Equal("01012345678", phoneCandidate.Canonical.Value);
+        Assert.Equal("01012345678", CanonicalAssert.Text(phoneCandidate));
         Assert.Equal("PhoneDetector", phoneCandidate.DetectorName);
     }
 

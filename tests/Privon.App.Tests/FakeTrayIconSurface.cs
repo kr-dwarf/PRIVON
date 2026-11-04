@@ -6,7 +6,7 @@ namespace Privon.App.Tests;
 // and observe Show/Dispose lifecycle without ever constructing a real WinForms NotifyIcon (real
 // tray rendering remains manual release QA, per Phase 3C STEP40 instruction). No mocking framework
 // -- hand-written, matching every other Fake* in this project.
-internal sealed class FakeTrayIconSurface : ITrayIconSurface
+internal sealed class FakeTrayIconSurface : ITrayIconSurface, IProtectionStatusSurface, IUsReadinessSurface
 {
     public int ShowCallCount { get; private set; }
     public int DisposeCallCount { get; private set; }
@@ -96,7 +96,45 @@ internal sealed class FakeTrayIconSurface : ITrayIconSurface
 
     public void SetAutoStartChecked(bool isChecked) => AutoStartCheckedHistory.Add(isChecked);
 
+    /// <summary>Every protection status the bridge displayed, in order, with whether a warning notification was requested.
+    /// Additive: the shipped bridge never calls it.</summary>
+    public List<(ProtectionStatusPresentation Presentation, bool Notify)> ProtectionStatusHistory { get; } = [];
+
+    /// <summary>When set, <see cref="SetProtectionStatus"/> throws it, to prove a display failure never reaches protection.</summary>
+    public Exception? ThrowOnSetProtectionStatus { get; set; }
+
+    public void SetProtectionStatus(ProtectionStatusPresentation presentation, bool notify)
+    {
+        if (ThrowOnSetProtectionStatus is { } ex) throw ex;
+        lock (ProtectionStatusHistory) ProtectionStatusHistory.Add((presentation, notify));
+    }
+
     /// <summary>Gate 032-C2 -- mirrors <see cref="Show"/>'s own ThrowOnShow pattern.</summary>
+    // U.S. readiness line (explicit opt-in only)
+    public List<UsReadinessPresentation> UsReadinessHistory { get; } = [];
+
+    public UsReadinessPresentation? CurrentUsReadiness { get { lock (UsReadinessHistory) return UsReadinessHistory.Count > 0 ? UsReadinessHistory[^1] : null; } }
+
+    public Exception? ThrowOnSetUsReadiness { get; set; }
+
+    public int UsReadinessRefreshSubscriberCount { get; private set; }
+
+    private EventHandler? _usReadinessRefreshRequested;
+
+    public event EventHandler? UsReadinessRefreshRequested
+    {
+        add { _usReadinessRefreshRequested += value; UsReadinessRefreshSubscriberCount++; }
+        remove { _usReadinessRefreshRequested -= value; UsReadinessRefreshSubscriberCount--; }
+    }
+
+    public void SetUsReadiness(UsReadinessPresentation presentation)
+    {
+        if (ThrowOnSetUsReadiness is { } ex) throw ex;
+        lock (UsReadinessHistory) UsReadinessHistory.Add(presentation);
+    }
+
+    public void RaiseUsReadinessRefreshRequested() => _usReadinessRefreshRequested?.Invoke(this, EventArgs.Empty);
+
     public void ShowChromeReconnectNotification()
     {
         if (ThrowOnShowChromeReconnectNotification is { } ex) throw ex;

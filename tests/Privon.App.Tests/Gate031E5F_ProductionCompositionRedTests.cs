@@ -139,6 +139,12 @@ public class Gate031E5F_ProductionCompositionRedTests
     // during composition/startup. Verified structurally: PrivonAppComposition's own source never
     // references Install/NativeMessagingHostRegistrar at all, AND the real machine's registry is
     // independently confirmed untouched by this same test run.
+    //
+    // THE CONTRACT IS "START DOES NOT CHANGE THE REGISTRATION", NOT "THERE IS NO REGISTRATION". A developer machine that ever pressed the
+    // Settings button already has HKCU registrations (written by SettingsCoordinator -> NativeMessagingHostRegistrationCoordinator, never by
+    // composition Start), so the real-machine test compares the state before and after Start -- key present or absent, every value with its kind
+    // and data, subkeys, and the manifest file the default value points at -- and the snapshot itself is proven to see every kind of change
+    // on a private scratch key that is never one of the real registrations.
     // ==================================================================
 
     [Fact]
@@ -152,25 +158,178 @@ public class Gate031E5F_ProductionCompositionRedTests
         Assert.DoesNotContain("NativeMessagingHostRegistrar", source, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Case7_8_9_RealMachine_NoComPrivonHostRegistrationAfterCompositionStart()
+    private const string ChromeHostKey = @"Software\Google\Chrome\NativeMessagingHosts\com.privon.host";
+    private const string EdgeHostKey = @"Software\Microsoft\Edge\NativeMessagingHosts\com.privon.host";
+
+    /// <summary>
+    /// A read-only, content-free description of one HKCU registration: absent, or present with every value (name, kind, data -- environment variables NOT
+    /// expanded), every subkey, and -- for a default value that names a file -- that file's existence, length and last-write time. Two descriptions are
+    /// equal exactly when nothing a registrar could create, change, retarget or delete differs.
+    /// </summary>
+    private static string DescribeRegistration(string subKeyPath)
     {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(subKeyPath, writable: false);
+        if (key is null) return subKeyPath + ": absent";
+
+        var sb = new System.Text.StringBuilder(subKeyPath + ": present");
+        foreach (string name in key.GetValueNames().OrderBy(n => n, StringComparer.Ordinal))
+        {
+            var kind = key.GetValueKind(name);
+            object? data = key.GetValue(name, null, Microsoft.Win32.RegistryValueOptions.DoNotExpandEnvironmentNames);
+            sb.Append("\n  value '").Append(name).Append("' kind=").Append(kind).Append(" data=").Append(FormatData(data));
+            if (name.Length == 0 && data is string path)
+            {
+                var file = new FileInfo(path);
+                sb.Append(file.Exists
+                    ? $"\n  manifest length={file.Length} lastWriteUtcTicks={file.LastWriteTimeUtc.Ticks}"
+                    : "\n  manifest missing");
+            }
+        }
+        foreach (string sub in key.GetSubKeyNames().OrderBy(n => n, StringComparer.Ordinal))
+            sb.Append("\n  subkey '").Append(sub).Append('\'');
+        return sb.ToString();
+    }
+
+    private static string FormatData(object? data) => data switch
+    {
+        null => "(null)",
+        byte[] bytes => Convert.ToHexString(bytes),
+        string[] many => string.Join("\u0001", many),
+        _ => Convert.ToString(data, System.Globalization.CultureInfo.InvariantCulture) ?? "",
+    };
+
+    private static void AssertRegistrationsUnchanged(string[] watched, string[] before, string phase)
+    {
+        for (int i = 0; i < watched.Length; i++)
+        {
+            string now = DescribeRegistration(watched[i]);
+            Assert.True(before[i] == now,
+                "Gate E5F case 7/8/9: composition " + phase + " changed " + watched[i] + "." + Environment.NewLine + "before: " + before[i] + Environment.NewLine + "after:  " + now);
+        }
+    }
+
+    [Fact]
+    public void Case7_8_9_RealMachine_CompositionStart_LeavesTheHostRegistrationsExactlyAsFound()
+    {
+        // whatever this machine has (nothing, or an old Settings-button registration), Start and Dispose must leave it exactly as found
+        string[] watched = [ChromeHostKey, EdgeHostKey];
+        string[] before = watched.Select(DescribeRegistration).ToArray();
+
         string storageRoot = CreateTempStorageRoot();
         using var composition = CreateRealComposition(storageRoot);
-        composition.Start();
         try
         {
-            using var chromeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Google\Chrome\NativeMessagingHosts\com.privon.host");
-            using var edgeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Edge\NativeMessagingHosts\com.privon.host");
-            Assert.True(chromeKey is null, "Gate E5F case 7/8/9: real Chrome com.privon.host must remain absent.");
-            Assert.True(edgeKey is null, "Gate E5F case 7/8/9: real Edge com.privon.host must remain absent.");
+            composition.Start();
+            AssertRegistrationsUnchanged(watched, before, "Start");
         }
         finally
         {
             composition.Dispose();
             Directory.Delete(storageRoot, recursive: true);
+        }
+        AssertRegistrationsUnchanged(watched, before, "Dispose");
+    }
+
+    [Fact]
+    public void Case7_8_9_TheRealMachineAssertion_FiresOnAnUnauthorizedRegistrationChange_AbsentOrPresent()
+    {
+        // the same assertion the real-machine test uses, pointed at a private scratch path, with the test itself standing in for "Start did it"
+        string scratchRoot = @"Software\PrivonTestScratch_" + Guid.NewGuid().ToString("N");
+        string hostPath = scratchRoot + @"\NativeMessagingHosts\com.privon.host";
+        string[] watched = [hostPath];
+        var hkcu = Microsoft.Win32.Registry.CurrentUser;
+        try
+        {
+            // no registration on the machine: nothing happening is fine; a registration appearing is not
+            string[] absent = watched.Select(DescribeRegistration).ToArray();
+            AssertRegistrationsUnchanged(watched, absent, "Start");
+            using (var created = hkcu.CreateSubKey(hostPath))
+            {
+                created.SetValue("", @"C:\scratch\host.json");
+                Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertRegistrationsUnchanged(watched, absent, "Start"));
+
+                // an existing registration: nothing happening is fine; a value changed or the registration deleted is not
+                string[] present = watched.Select(DescribeRegistration).ToArray();
+                AssertRegistrationsUnchanged(watched, present, "Start");
+                created.SetValue("", @"C:\scratch\other-host.json");
+                Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertRegistrationsUnchanged(watched, present, "Start"));
+            }
+            string[] changed = watched.Select(DescribeRegistration).ToArray();
+            hkcu.DeleteSubKeyTree(scratchRoot, throwOnMissingSubKey: false);
+            Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertRegistrationsUnchanged(watched, changed, "Start"));   // the registration deleted
+        }
+        finally
+        {
+            hkcu.DeleteSubKeyTree(scratchRoot, throwOnMissingSubKey: false);
+        }
+    }
+
+    [Fact]
+    public void Case7_8_9_RegistrationSnapshot_SeesEveryKindOfChange_WhetherTheRegistrationWasThereOrNot()
+    {
+        // A private scratch key under HKCU, unique to this run and removed at the end -- NEVER com.privon.host, Chrome's or Edge's. The same
+        // DescribeRegistration that guards the real machine must tell every one of these apart.
+        string scratchRoot = @"Software\PrivonTestScratch_" + Guid.NewGuid().ToString("N");
+        string hostPath = scratchRoot + @"\NativeMessagingHosts\com.privon.host";
+        string manifest = Path.Combine(Path.GetTempPath(), "PrivonScratchManifest_" + Guid.NewGuid().ToString("N") + ".json");
+        var hkcu = Microsoft.Win32.Registry.CurrentUser;
+        try
+        {
+            // ABSENT environment: untouched stays equal; creating it is a change
+            string absent = DescribeRegistration(hostPath);
+            Assert.Equal(absent, DescribeRegistration(hostPath));
+            Assert.EndsWith(": absent", absent);
+
+            using (var created = hkcu.CreateSubKey(hostPath))
+            {
+                string emptyKey = DescribeRegistration(hostPath);
+                Assert.NotEqual(absent, emptyKey);                                    // created from nothing
+
+                // PRESENT environment: untouched stays equal, and each kind of change is seen
+                File.WriteAllText(manifest, "{}");
+                created.SetValue("", manifest, Microsoft.Win32.RegistryValueKind.String);
+                string present = DescribeRegistration(hostPath);
+                Assert.NotEqual(emptyKey, present);                                   // a value added
+                Assert.Equal(present, DescribeRegistration(hostPath));                // unchanged -> equal
+
+                created.SetValue("", manifest + "2", Microsoft.Win32.RegistryValueKind.String);
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // retargeted
+                created.SetValue("", manifest, Microsoft.Win32.RegistryValueKind.String);
+                Assert.Equal(present, DescribeRegistration(hostPath));                // restored -> equal again
+
+                created.SetValue("", manifest, Microsoft.Win32.RegistryValueKind.ExpandString);
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // same text, different kind
+                created.SetValue("", manifest, Microsoft.Win32.RegistryValueKind.String);
+
+                created.SetValue("extra", "x", Microsoft.Win32.RegistryValueKind.String);
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // an extra value
+                created.DeleteValue("extra");
+                Assert.Equal(present, DescribeRegistration(hostPath));
+
+                using (created.CreateSubKey("child")) { }
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // an extra subkey
+                created.DeleteSubKey("child");
+                Assert.Equal(present, DescribeRegistration(hostPath));
+
+                File.WriteAllText(manifest, "{ \"changed\": true }");
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // the manifest the registration points at was rewritten
+                File.WriteAllText(manifest, "{}");
+                File.SetLastWriteTimeUtc(manifest, File.GetLastWriteTimeUtc(manifest).AddMinutes(1));
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // ... even to the same length, at a different time
+                File.Delete(manifest);
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // the manifest removed
+
+                created.DeleteValue("");
+                Assert.NotEqual(present, DescribeRegistration(hostPath));             // the value deleted
+            }
+
+            hkcu.DeleteSubKeyTree(scratchRoot, throwOnMissingSubKey: false);
+            Assert.Equal(absent, DescribeRegistration(hostPath));                     // and the whole registration deleted -> absent again
+        }
+        finally
+        {
+            hkcu.DeleteSubKeyTree(scratchRoot, throwOnMissingSubKey: false);
+            if (File.Exists(manifest)) File.Delete(manifest);
         }
     }
 

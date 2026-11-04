@@ -390,6 +390,8 @@ try {
         "*testhost*",
         "*xunit*",
         "*UiaInspector*",
+        "*Experiment*",
+        "*OptInHost*",
         "privon-diagnostic-*.log",
         "master.key",
         "settings.bin",

@@ -121,14 +121,14 @@ public class SessionLockInvalidationTests
         // production, using only already-public seams (no new test-only API on the scope).
         var g1 = lifecycle.AdvanceOnClipboardNotification();
         var publisher = new ClipboardDecisionSessionPublisher(lifecycle);
-        var item = new ClipboardDecisionItem(new CanonicalValue(PiiType.Phone, "01099998888"), RiskLevel.Level1);
+        var item = new ClipboardDecisionItem(new CanonicalValue(PiiType.Phone, "01099998888"), RiskLevel.Level1, DetectorId.Create("test.phone"));
         var published = publisher.TryPublish(g1, "raw text mentioning 01099998888", new ClipboardDecisionPlan([item]));
         Assert.True(published);
 
         var scope = lifecycle.GetActiveScope()!;
         scope.ApplyIntent(item, ClipboardDecisionIntent.BypassOnce);
         scope.CommitResolved(scope.InitialStamp);
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.DetectorId, item.Canonical));
         Assert.True(lifecycle.IsActive(scope));
 
         sessionLock.RaiseLocked();

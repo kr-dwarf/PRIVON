@@ -13,18 +13,58 @@ public class DetectionPipelineTests
     // A minimal test-only detector that returns whatever the caller configured, so overlap /
     // ordering / failure-isolation scenarios can be engineered precisely without depending on
     // real detectors' exact regex behavior.
-    private sealed class FakeDetector : IDetector
+    //
+    // `internal` rather than `private` so the whole Privon.Detection.Tests assembly can reuse THIS
+    // double instead of declaring another one. D3B0-A A.9 §24.3 A fixes the accepted test-local
+    // IDetector inventory at 4 implementations across 3 files; a registry/readiness scenario that
+    // needs a non-Ready detector therefore CONFIGURES this one rather than adding a fifth.
+    internal sealed class FakeDetector : IDetector
     {
         private readonly Func<DetectionContext, IReadOnlyList<DetectionCandidate>> _detect;
+        private readonly DetectorReadinessState _readiness;
+
         public string Name { get; }
         public PiiType PiiType { get; }
 
-        public FakeDetector(string name, PiiType piiType, Func<DetectionContext, IReadOnlyList<DetectionCandidate>> detect)
+        /// <param name="id">
+        /// Synthetic identity -- NEVER one of the nine frozen D2.2 contract IDs. Defaults to
+        /// <c>test.pipeline_fake</c>; a caller registering several of these in one DetectorRegistry
+        /// must pass distinct ids, because §16.3 rule 3 rejects duplicates rather than deduping.
+        /// </param>
+        /// <param name="rank">
+        /// Synthetic rank OUTSIDE the frozen 10..360 band, so it can never collide with a
+        /// registered production detector (§16.3 rule 4).
+        /// </param>
+        /// <param name="readiness">
+        /// Defaults to Ready, which is what a pipeline-input double needs. A registry test may pass
+        /// <see cref="DetectorReadinessState.UnavailableAuthoritySnapshot"/> to exercise the
+        /// registered-but-NOT-Ready state (§16.2). NOT_READY_IS_NOT_A_SHELL: this remains a real
+        /// implementation whose Detect actually runs -- it is never a no-op production shell, and it
+        /// lives only in the test assembly.
+        /// </param>
+        public FakeDetector(
+            string name,
+            PiiType piiType,
+            Func<DetectionContext, IReadOnlyList<DetectionCandidate>> detect,
+            DetectorId? id = null,
+            int rank = 900003,
+            DetectorReadinessState readiness = DetectorReadinessState.Ready)
         {
             Name = name;
             PiiType = piiType;
             _detect = detect;
+            Id = id ?? DetectorId.Create("test.pipeline_fake");
+            ResolutionRank = rank;
+            _readiness = readiness;
         }
+
+        // D3B0-A A.9 §6 -- the three new abstract IDetector members.
+        public DetectorId Id { get; }
+
+        public int ResolutionRank { get; }
+
+        // Queried at use, never cached (§16.2).
+        public DetectorReadinessState Readiness => _readiness;
 
         public IReadOnlyList<DetectionCandidate> Detect(DetectionContext context) => _detect(context);
     }
@@ -33,6 +73,16 @@ public class DetectionPipelineTests
     {
         public string Name => "ThrowingDetector";
         public PiiType PiiType => PiiType.Secret;
+        // D3B0-A A.9 §6 -- the three new abstract IDetector members. Synthetic identity:
+        // NOT one of the nine frozen D2.2 contract IDs, and a rank outside the frozen
+        // 10..360 band so it can never collide with a registered detector. Ready, because
+        // this double is a pipeline INPUT and is never registered in a DetectorRegistry.
+        public DetectorId Id { get; } = DetectorId.Create("test.pipeline_throwing");
+
+        public int ResolutionRank => 900004;
+
+        public DetectorReadinessState Readiness => DetectorReadinessState.Ready;
+
         public IReadOnlyList<DetectionCandidate> Detect(DetectionContext context) =>
             throw new InvalidOperationException("synthetic detector failure");
     }
@@ -254,7 +304,7 @@ public class DetectionPipelineTests
         Assert.Single(result.Candidates);
         var span = result.Candidates[0].Span;
         Assert.Equal(phone, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("01012345678", result.Candidates[0].Canonical.Value);
+        Assert.Equal("01012345678", CanonicalAssert.Text(result.Candidates[0]));
     }
 
     // ---- 15/16. very long input: no exception, every span stays inside the raw text ----

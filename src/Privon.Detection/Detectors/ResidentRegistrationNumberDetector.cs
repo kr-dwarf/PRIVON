@@ -38,6 +38,19 @@ public sealed class ResidentRegistrationNumberDetector : IDetector
 {
     public string Name => "ResidentRegistrationNumberDetector";
     public PiiType PiiType => global::Privon.Detection.PiiType.ResidentRegistrationNumber;
+    // ---- D3B0-A A.9 §5.2 frozen legacy identity/rank/evidence. Literals, never
+    // ---- inferred from the class name, registration order, or list position
+    // ---- (DETECTOR_IDENTITY_IS_EXPLICIT, §5.1). Detect(), the regex, confidence
+    // ---- computation, the canonicalizer and span arithmetic are UNCHANGED.
+    public DetectorId Id { get; } = DetectorId.Create("kr.rrn");
+
+    public int ResolutionRank => 30;
+
+    // §16.2: this detector depends on no authority snapshot, so it is literally
+    // Ready. Stated rather than defaulted precisely because a default of Ready
+    // would be the fail-open direction (§6).
+    public DetectorReadinessState Readiness => DetectorReadinessState.Ready;
+
 
     // Shared date+separator+gender prefix; the two patterns below only differ in what follows.
     // NOTE (TODO RRN_VS_ALIEN_REGISTRATION_CLASSIFICATION): [1-8] intentionally also matches
@@ -99,7 +112,14 @@ public sealed class ResidentRegistrationNumberDetector : IDetector
             RiskLevel.Level3,
             confidence,
             canonical,
-            Name));
+            Name,
+            // DETECTOR_MUST_STAMP_IDENTITY (§7.1): this detector passes its own DetectorId,
+            // ResolutionRank and ResolutionEvidence EXPLICITLY. The parameter defaults exist
+            // for harness-injected candidates only; a production detector left on defaults
+            // is a contract violation.
+            DetectorId: Id,
+            Evidence: ResolutionEvidence.NotModelled,
+            ResolutionRank: ResolutionRank));
     }
 
     private static bool IsPlausibleDate(string mm, string dd)

@@ -7,9 +7,12 @@
 **PRIVON — turn on privacy protection before you use AI.**
 
 > PRIVON is a public beta, distributed for real-world validation. It does not claim
-> 1.0-level stability. This document describes the v0.3.2 candidate while release
-> finalization is in progress. It does not claim that v0.3.2 has been publicly published;
-> see [Release provenance](#release-provenance) for the verified release state.
+> 1.0-level stability. This document describes the v0.4.0-beta release line. The earlier
+> v0.3.2-beta has already been published on GitHub. This document does not claim that
+> v0.4.0-beta has been publicly published; check the
+> [GitHub Releases](https://github.com/kr-dwarf/PRIVON/releases) page for the releases that are
+> actually published, and see [Release provenance](#release-provenance) for the verified
+> release state.
 
 ---
 
@@ -79,7 +82,9 @@ not the original phone number.
 
 ## Supported Scope
 
-- Windows 10 / 11 (64-bit, win-x64)
+- Windows 11 (64-bit, win-x64) — the official QA target for v0.4.0-beta. Earlier beta
+  releases documented Windows 10 / 11; no new Windows 10 verification is claimed for
+  v0.4.0-beta.
 - Desktop targets: the currently authorized **ChatGPT Windows Desktop Microsoft Store
   package identity** and the authenticated **Claude Desktop** application. Name-only
   lookalikes and unrecognized identities are not accepted.
@@ -111,6 +116,9 @@ PRIVON currently attempts to detect and protect the following categories:
 - MAC addresses
 - GPS/location coordinates
 
+The U.S. categories are separate and optional; see
+[U.S. personal information detection](#us-personal-information-detection-optional-off-by-default).
+
 > Even for these categories, detection can miss or misjudge values depending on context.
 > PRIVON does not aim for "perfect detection" — please also read
 > [What PRIVON Does Not Guarantee](#what-privon-does-not-guarantee)
@@ -126,6 +134,10 @@ Instead, it shows you a confirmation window and lets you decide.
 This confirmation window offers exactly one action: **Protect All**. Clicking it
 protects every item that needed a decision, then closes the window.
 
+The window reads "Personal information detected. Select Protect All to protect the
+clipboard content." PRIVON's on-screen text (Settings, tray menu, this window) is currently
+in English; a Korean/English language choice is planned separately.
+
 ---
 
 ## Settings
@@ -139,6 +151,8 @@ live:
   value you never want protected)
 - Reset protection scope back to the default (every category on)
 - Reset your exception list
+- Turn U.S. personal information detection on or off (it is off until you turn it on; see
+  below)
 - Your choices are saved locally and persist across restarts
 - If PRIVON's encrypted local storage is currently unavailable, Settings honestly shows
   this degraded state rather than silently pretending your changes were saved
@@ -147,6 +161,28 @@ Not yet live: Name, Address, and Company have no working detector yet, so they h
 Settings control of their own — there is nothing to turn on or off for them. Settings has
 no Undo/Restore for a change you already made; a reset restores defaults, it does not step
 back through history.
+
+### U.S. personal information detection (optional, off by default)
+
+U.S. detection is **not enabled automatically** -- not on a new installation and not when you
+update. To enable it, open Settings, find **Country Scope**, and check **United States
+personal information detection**. Until you do, the tray menu shows "U.S. Detection: Not
+Enabled (Korean and Global detection remain active)" and no U.S. detector runs. Once enabled,
+PRIVON also looks for U.S. SSN/ITIN/ATIN, MBI, SEVIS, passport, A-Number, I-94, driver's
+license / state ID, bank account, phone, address and name values; some high-sensitivity
+values (for example an SSN) ask for your confirmation first, like the Korean ones. Uncheck
+the box to turn it off again; Korean and Global detection are not affected either way, and
+your choice is kept across restarts.
+
+- "U.S. Detection: 13/13 Ready (Verified Official Sources)" means the detectors and their
+  official-source data are ready to run. It is not protection of anything you copied, and it
+  does not mean a send is safe.
+- If PRIVON cannot verify the saved enablement record, or cannot verify the official-source
+  data, U.S. detection stays off and Settings and the tray say so ("Enablement Record
+  Unverifiable" / "Unavailable"). That is not a choice you made; you can enable it again in
+  Settings.
+- The placeholder labels PRIVON writes are still Korean for U.S. values too (for example
+  `[전화번호1]` for a phone number); this is current behavior.
 
 ### Chrome connection and reconnection
 
@@ -181,16 +217,35 @@ PRIVON does not claim or guarantee any of the following:
 - Interception or monitoring of ChatGPT's network traffic.
 - Automatic sending of messages — PRIVON never sends anything on your behalf; you still
   paste and send manually.
-- Protection for text typed directly into the composer (direct composer typing). PRIVON's
-  officially supported and guaranteed path is the **clipboard path**. Direct-typing
-  protection exists internally only as a limited/experimental capability and is **not**
-  part of the protection guarantee.
+- Protection for text typed directly into the composer (direct composer typing), or any
+  blocking of a send. PRIVON's officially supported and guaranteed path is the
+  **clipboard path**. PRIVON does not intercept or block Enter, a mouse click on a Send
+  button, a paste, or any other way of sending text, and the released application
+  contains no code that tries to. The only experiments in that direction are research
+  spikes in this repository (`tools/UiaInspector`) that are not part of the released
+  product; in testing they did not reliably block sending (see
+  [docs/threat-model.md](docs/threat-model.md)).
 - That a paste, or a send, actually occurred. PRIVON protects clipboard content; it does
   not track or confirm what you subsequently did with it.
-- Any persistent "safe" or "verified" state. PRIVON does not display a lasting
-  "protected"/"verified" indicator anywhere in the UI (the tray icon's tooltip, for
-  example, only indicates that PRIVON is running — not that any particular content has
-  been protected or verified).
+- Any persistent "safe" or "verified" state. The tray icon's tooltip shows the state of
+  the LAST clipboard text PRIVON handled, and it changes with the next clipboard change
+  (for example "PRIVON — Scanning, not yet protected", "PRIVON — Awaiting your decision,
+  not yet protected", "PRIVON — Last rewrite to protected form verified" or "PRIVON —
+  Protection unconfirmed, original may remain"). A "verified" status means only that
+  PRIVON rewrote that clipboard text and read it back; it never means that a paste or a
+  send was blocked or is safe, and it says nothing about what you typed or will paste. If
+  a protection step fails and the failure lasts more than a couple of seconds, PRIVON
+  shows one warning notification that the protection is unconfirmed and the original text
+  may still be on the clipboard; it does not block anything. PRIVON checks clipboard text
+  only when it is copied in a supported application. A copy made anywhere else (or one
+  that is not text) is NOT checked, and the tooltip says so ("PRIVON — Copied from
+  unsupported app, not scanned") instead of reporting a finished check; before anything
+  has been copied it says "PRIVON — Running, nothing scanned yet". "Not scanned" and "not
+  blocked" are separate facts, and PRIVON blocks nothing in either case. When you choose
+  to keep an item as the original, the tooltip says "PRIVON — Original kept by choice,
+  item not protected"; it never calls that finished, protected or verified, and it does
+  not claim that the one-time permission was used. The tray status is a display, not a
+  guarantee.
 - That pasted content in the ChatGPT composer definitely matches the protected clipboard
   text. An internal capability exists to verify that the Windows clipboard write itself
   succeeded and can be read back correctly — but that is a narrower guarantee than
@@ -254,7 +309,7 @@ Chrome Native Messaging registration and manifest, encrypted product-local state
 `%LocalAppData%\PRIVON`, opt-in diagnostic logs if diagnostics were enabled, and the
 installed Chrome extension and its browser-managed state. Browser extension removal is
 performed in Chrome. Product-local files and any remaining owned registration may require
-manual cleanup. There is no installer or uninstaller in v0.3.2.
+manual cleanup. There is no installer or uninstaller in the v0.4.0-beta line (nor in v0.3.2-beta).
 
 ---
 
@@ -297,7 +352,8 @@ problem, please let us know via a GitHub Issue or the Discussions tab.
 
 ### Requirements
 
-- Windows 10/11
+- Windows 11 x64 (the official QA target for v0.4.0-beta; earlier releases documented
+  Windows 10/11)
 - .NET 10 SDK
 
 ### Restore / Build / Test
@@ -336,11 +392,11 @@ local user data files), and only then produces a ZIP + SHA-256 checksum. `-Versi
 required — there is no default:
 
 ```powershell
-.\tools\publish-release.ps1 -Version 0.3.2
+.\tools\publish-release.ps1 -Version "0.4.0-beta"
 ```
 
 (The command above shows the invocation shape. This README does not claim that a certified
-v0.3.2 desktop release package has been published.)
+v0.4.0-beta desktop release package has been published.)
 
 ---
 
@@ -390,12 +446,21 @@ mean "works perfectly in every environment."
 
 - Historical candidate; retained here as an earlier provenance record.
 
-**v0.3.2 candidate**
+**v0.3.2-beta**
 
-- Current source is in release finalization; this is not a claim of public publication.
+- Published on GitHub Releases on September 14, 2026 (pre-release).
+- Tagged commit: `a575b49`
 - The Chrome Web Store 0.3.2 package was submitted for review with auto-publish disabled.
 - Exact submitted-package provenance is recorded in
   [`docs/release-0.3.2-store-provenance.md`](./docs/release-0.3.2-store-provenance.md).
+
+**v0.4.0-beta**
+
+- Release line in preparation; source branch `release/v0.4.0-beta`. This is not a claim of
+  public publication.
+- Check [GitHub Releases](https://github.com/kr-dwarf/PRIVON/releases) for whether it has
+  been published. A package SHA-256 and tagged commit will be recorded here only after a
+  real publication.
 
 ---
 

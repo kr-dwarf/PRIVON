@@ -14,6 +14,17 @@ internal sealed class FakeDecisionPromptSurface : IDecisionPromptSurface
     public string? LastNeutralFailureMessage { get; private set; }
     public bool IsClosed { get; private set; }
 
+    /// <summary>Whether this fake claims to be the foreground window at the moment of a press (a keyboard / screen-reader activation).</summary>
+    public bool IsForeground { get; set; }
+
+    /// <summary>Whether this fake claims the press is being raised inside a fresh Enter / Space addressed to the button.</summary>
+    public bool ByKeyboard { get; set; }
+
+    /// <summary>The process this fake claims was the active application right before it became active (0 = unknown).</summary>
+    public uint PreviousActiveProcessId { get; set; }
+
+    public DecisionPromptInvocation CaptureInvocation() => new(IsForeground, ByKeyboard, PreviousActiveProcessId);
+
     /// <summary>Optional test hook invoked at the end of <see cref="Close"/> -- lets a test record
     /// cross-object disposal/close ORDER (e.g. proving a decision prompt closes before the tray
     /// surface is disposed) without needing a mocking framework.</summary>

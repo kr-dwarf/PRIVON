@@ -229,7 +229,7 @@ public class ClipboardDecisionScopeTests
     {
         var tracker = new RevisionTracker();
         var stamp = tracker.Observe("raw-text-A");
-        var item = new ClipboardDecisionItem(new CanonicalValue(PiiType.Phone, "01012345678"), RiskLevel.Level1);
+        var item = new ClipboardDecisionItem(new CanonicalValue(PiiType.Phone, "01012345678"), RiskLevel.Level1, DetectorId.Create("test.phone"));
         var scope = new ClipboardDecisionScope(tracker, stamp, [item], generation: 99);
 
         var choice = scope.ApplyIntent(item, ClipboardDecisionIntent.BypassOnce);
@@ -239,7 +239,7 @@ public class ClipboardDecisionScopeTests
         scope.CommitResolved(scope.InitialStamp);
 
         Assert.True(scope.Committed);
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.DetectorId, item.Canonical));
         Assert.Equal(99, scope.Generation); // untouched by resolution-state mutation
     }
 }

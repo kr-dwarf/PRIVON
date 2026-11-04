@@ -41,17 +41,21 @@ public class Gate031F5B_PhaseDResolverWebRedTests
         public bool IsStillCurrent() => result;
     }
 
-    private static Privon.Detection.CanonicalValue DiscoverCanonical(string rawText, Privon.Detection.PiiType expectedType, Privon.Core.RiskLevel expectedLevel)
+    private static Privon.Detection.DetectionCandidate DiscoverCandidate(string rawText, Privon.Detection.PiiType expectedType, Privon.Core.RiskLevel expectedLevel)
     {
         var probe = Privon.Detection.DetectionPipeline.CreateDefault().Detect(rawText);
         var candidate = Assert.Single(probe.Candidates);
         Assert.Equal(expectedType, candidate.PiiType);
         Assert.Equal(expectedLevel, candidate.RiskLevel);
-        return candidate.Canonical;
+        return candidate;
     }
 
-    private static ClipboardDecisionItem MakeLevel3Item(string text = Level3Text) =>
-        new(DiscoverCanonical(text, Privon.Detection.PiiType.ResidentRegistrationNumber, Privon.Core.RiskLevel.Level3), Privon.Core.RiskLevel.Level3);
+    // The item carries the detector id the real detector stamped, as ClipboardPrivacyProcessor builds it (0.4.0).
+    private static ClipboardDecisionItem MakeLevel3Item(string text = Level3Text)
+    {
+        var candidate = DiscoverCandidate(text, Privon.Detection.PiiType.ResidentRegistrationNumber, Privon.Core.RiskLevel.Level3);
+        return new(CanonicalAssert.Present(candidate), Privon.Core.RiskLevel.Level3, candidate.DetectorId);
+    }
 
     private static ClipboardDecisionScope CreateScope(string sourceText, long generation, params ClipboardDecisionItem[] items)
     {

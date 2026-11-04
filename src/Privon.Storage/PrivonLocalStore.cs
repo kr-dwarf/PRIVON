@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -15,6 +16,8 @@ public sealed class PrivonLocalStore
     private readonly string _trustedPath;
     private readonly string _exceptionsPath;
     private readonly string _userExceptionsPath;
+    private readonly string _countryChoicePath;
+    private readonly string _countryActivationPath;
 
     // PRIVON v0.2.1 Gate 3B correction -- MASTER_KEY_UNAVAILABLE representation: the single
     // Storage-owned source of truth for "is a usable root key present for THIS instance." Null
@@ -34,6 +37,8 @@ public sealed class PrivonLocalStore
         _trustedPath = Path.Combine(rootDirectory, "trusted-public-info.bin");
         _exceptionsPath = Path.Combine(rootDirectory, "exceptions.bin");
         _userExceptionsPath = Path.Combine(rootDirectory, "user-exceptions.bin");
+        _countryChoicePath = Path.Combine(rootDirectory, "country-settings.bin");
+        _countryActivationPath = Path.Combine(rootDirectory, "country-activation.bin");
         _masterKey = masterKey;
     }
 
@@ -112,6 +117,179 @@ public sealed class PrivonLocalStore
         RequireValidStructure(entries, e => (e.PiiTypeId, e.Value));
         Save(_userExceptionsPath, StorePurpose.UserExceptions, JsonSerializer.SerializeToUtf8Bytes(entries));
     }
+
+    // ================================================================================================================
+    // PRIVON 0.4.0 T-1 -- the per-country ON/OFF choice (see CountryChoice.cs for what a readable record does and does not prove).
+    //
+    // Its own file (country-settings.bin) and purpose, the same master key / AES-GCM envelope / atomic replace as every other store here. PrivonSettings
+    // and settings.bin are untouched, so an older settings file keeps loading exactly as before and neither file can clobber the other.
+    //
+    //   * A record reads as On / Off only when: a usable key exists, the authentication tag verifies (this Windows user's key + this purpose), the
+    //     document is valid, its format version is known, its origin is known, and its revision is not older than one this process has already seen.
+    //   * Anything else is a NON-choice (Missing / Corrupt / Unauthenticated / UnknownVersion) and the caller keeps the country pack active.
+    //   * Writes are serialized per file, increase the revision, replace the file atomically (the old record survives any failed or interrupted
+    //     write), refuse to overwrite a record of a newer version, and never write without a usable key.
+    //
+    // LIMITS: the revision guard catches a rollback only WITHIN this process; a file restored while PRIVON is not running reads as the older (valid)
+    // record, because nothing outside the user's own files can say otherwise. And code running as the same Windows user can read the key and write a
+    // valid record: this store gives integrity and per-user scope, not a defense against that.
+    // ================================================================================================================
+
+    private static readonly ConcurrentDictionary<string, object> CountryLocks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, long> CountryHighestRevision = new(StringComparer.OrdinalIgnoreCase);
+
+    private enum CountryFileKind
+    {
+        Ok,
+        Missing,
+        Corrupt,
+        AuthFailed,
+        IoFailed,
+        UnknownVersion,
+    }
+
+    private (CountryFileKind Kind, CountryChoiceDocument.Doc? Doc) ReadCountryFile(string path, string purpose)
+    {
+        if (_masterKey is null) return (CountryFileKind.AuthFailed, null);
+        if (!File.Exists(path)) return (CountryFileKind.Missing, null);
+        byte[] plaintext;
+        try
+        {
+            var envelope = SecureEnvelope.Decode(File.ReadAllBytes(path));
+            plaintext = SecureEnvelopeCodec.Decrypt(_masterKey, purpose, envelope);
+        }
+        catch (CryptographicException)
+        {
+            return (CountryFileKind.AuthFailed, null);
+        }
+        catch (EnvelopeFormatException)
+        {
+            return (CountryFileKind.Corrupt, null);
+        }
+        catch (IOException)
+        {
+            return (CountryFileKind.IoFailed, null);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (CountryFileKind.IoFailed, null);
+        }
+
+        var (result, doc) = CountryChoiceDocument.TryParse(plaintext);
+        return result switch
+        {
+            CountryChoiceDocument.ParseResult.Ok => (CountryFileKind.Ok, doc),
+            CountryChoiceDocument.ParseResult.UnknownVersion => (CountryFileKind.UnknownVersion, null),
+            _ => (CountryFileKind.Corrupt, null),
+        };
+    }
+
+    /// <summary>
+    /// The persisted choice for one country. Never throws for a bad file: every failure is a non-choice state. Throws only for an invalid
+    /// <paramref name="country"/> id (a programming error).
+    /// </summary>
+    public CountryChoiceRead LoadCountryChoice(string country) => LoadChoice(_countryChoicePath, StorePurpose.CountrySettings, country);
+
+    private CountryChoiceRead LoadChoice(string path, string purpose, string country)
+    {
+        if (!CountryChoiceDocument.IsValidCountryId(country))
+            throw new ArgumentException("The country id must be 1-32 ASCII letters or digits, starting with a letter.", nameof(country));
+
+        lock (CountryLocks.GetOrAdd(path, _ => new object()))
+        {
+            var (kind, doc) = ReadCountryFile(path, purpose);
+            switch (kind)
+            {
+                case CountryFileKind.Missing: return new(CountryChoiceState.Missing, 0);
+                case CountryFileKind.Corrupt: return new(CountryChoiceState.Corrupt, 0);
+                case CountryFileKind.UnknownVersion: return new(CountryChoiceState.UnknownVersion, 0);
+                case CountryFileKind.AuthFailed:
+                case CountryFileKind.IoFailed: return new(CountryChoiceState.Unauthenticated, 0);
+            }
+
+            long highest = CountryHighestRevision.GetOrAdd(path, 0);
+            if (doc!.Revision < highest) return new(CountryChoiceState.Unauthenticated, doc.Revision);   // a record older than one already seen
+            CountryHighestRevision[path] = doc.Revision;
+
+            var choice = doc.Choices.FirstOrDefault(c => string.Equals(c.Country, country, StringComparison.OrdinalIgnoreCase));
+            if (choice is null) return new(CountryChoiceState.Missing, doc.Revision);
+            if (choice.Origin != CountryChoiceDocument.UserActionOrigin) return new(CountryChoiceState.Unauthenticated, doc.Revision);
+            return new(choice.Enabled ? CountryChoiceState.On : CountryChoiceState.Off, doc.Revision);
+        }
+    }
+
+    /// <summary>
+    /// Records one country's choice. The caller states WHERE the choice came from; only <see cref="CountryChoiceOrigin.SettingsUserAction"/> is
+    /// accepted, and it must be passed only from a real user action in the Settings UI -- the store cannot check that. Other countries' choices are kept.
+    /// Throws (and leaves the existing record untouched) when there is no usable key, when the existing record is of a newer format version, or when the
+    /// file cannot be read or replaced (an IO or access exception).
+    /// </summary>
+    public void SaveCountryChoice(string country, bool enabled, CountryChoiceOrigin origin) =>
+        SaveChoice(_countryChoicePath, StorePurpose.CountrySettings, country, enabled, origin);
+
+    private void SaveChoice(string path, string purpose, string country, bool enabled, CountryChoiceOrigin origin)
+    {
+        if (!CountryChoiceDocument.IsValidCountryId(country))
+            throw new ArgumentException("The country id must be 1-32 ASCII letters or digits, starting with a letter.", nameof(country));
+        if (origin != CountryChoiceOrigin.SettingsUserAction)
+            throw new ArgumentException("Only a choice that came from a Settings user action can be recorded.", nameof(origin));
+        if (_masterKey is null)
+        {
+            throw new InvalidOperationException(
+                "Cannot save: the master encryption key is currently unavailable. Writing under a temporary or replacement key is never permitted.");
+        }
+
+        lock (CountryLocks.GetOrAdd(path, _ => new object()))
+        {
+            var (kind, doc) = ReadCountryFile(path, purpose);
+            long highest = CountryHighestRevision.GetOrAdd(path, 0);
+            List<CountryChoiceDocument.Choice> choices;
+            long baseRevision;
+
+            switch (kind)
+            {
+                case CountryFileKind.UnknownVersion:
+                    throw new InvalidOperationException("The existing country settings are of a newer format version and are never overwritten.");
+                case CountryFileKind.IoFailed:
+                    throw new IOException("The existing country settings could not be read, so they were not replaced.");
+                case CountryFileKind.Ok when doc!.Revision >= highest:
+                    choices = doc.Choices.ToList();
+                    baseRevision = doc.Revision;
+                    break;
+                default:
+                    // missing, corrupt, failed authentication, or older than one already seen: nothing in it can be trusted, so it is replaced
+                    choices = [];
+                    baseRevision = highest;
+                    break;
+            }
+
+            choices.RemoveAll(c => string.Equals(c.Country, country, StringComparison.OrdinalIgnoreCase));
+            choices.Add(new CountryChoiceDocument.Choice(country, enabled, CountryChoiceDocument.UserActionOrigin));
+            long revision = baseRevision + 1;
+
+            var plaintext = CountryChoiceDocument.Serialize(new CountryChoiceDocument.Doc(revision, choices));
+            var envelope = SecureEnvelopeCodec.Encrypt(_masterKey, purpose, plaintext);
+            AtomicFileWriter.WriteAllBytes(path, envelope.Encode());   // throws leave the old file as it was
+            CountryHighestRevision[path] = revision;
+        }
+    }
+
+    // ----------------------------------------------------------------------------------------------------------------
+    // PRIVON 0.4.0 P1 -- the ACTIVATION record of a country pack: "the user explicitly turned this country's detection on". It is a separate file
+    // (country-activation.bin) with its own purpose, built on the SAME envelope, document format, origin check, revision rule and atomic replace as the
+    // country choice above (the two share one implementation, parameterized by file and purpose), so a damaged choice file never says anything about
+    // the activation and the reverse. A record reads as On only when it is an INTACT, known-version, user-action record; Missing means "never
+    // activated"; anything else (Corrupt / Unauthenticated / UnknownVersion) is an activation that CANNOT BE VERIFIED -- never an Off and never an On.
+    // An activation is only ever recorded as On: there is no "deactivate" (turning detection off afterwards is the country choice's Off).
+    // LIMIT: as for the choice, the origin marker is a claim by the writing code, not proof of a person.
+    // ----------------------------------------------------------------------------------------------------------------
+
+    /// <summary>The persisted activation of one country pack: <see cref="CountryChoiceState.On"/> only for an intact user-action record, <see cref="CountryChoiceState.Missing"/> when never activated, and any other state when the record cannot be verified.</summary>
+    public CountryChoiceRead LoadCountryActivation(string country) => LoadChoice(_countryActivationPath, StorePurpose.CountryActivation, country);
+
+    /// <summary>Records that the user explicitly activated this country pack. Same refusals as <see cref="SaveCountryChoice"/> (no usable key, a newer-format record, an IO failure, an origin other than a Settings user action).</summary>
+    public void SaveCountryActivation(string country, CountryChoiceOrigin origin) =>
+        SaveChoice(_countryActivationPath, StorePurpose.CountryActivation, country, true, origin);
 
     // Phase 2R.2: a structurally malformed entry (missing/null/empty/whitespace PiiTypeId or
     // Value -- never a PII-format check, Storage does not validate Phone/Email shapes) makes

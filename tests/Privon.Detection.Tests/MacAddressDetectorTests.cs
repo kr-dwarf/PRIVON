@@ -24,7 +24,7 @@ public class MacAddressDetectorTests
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level2, results[0].RiskLevel);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal("02:00:00:00:00:01", results[0].Canonical.Value);
+        Assert.Equal("02:00:00:00:00:01", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 2. hyphen MAC ----
@@ -34,7 +34,7 @@ public class MacAddressDetectorTests
         var results = Detect("장치 MAC 주소: 02-00-00-00-00-01 확인");
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level2, results[0].RiskLevel);
-        Assert.Equal("02:00:00:00:00:01", results[0].Canonical.Value);
+        Assert.Equal("02:00:00:00:00:01", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 3. uppercase/lowercase ----
@@ -46,16 +46,16 @@ public class MacAddressDetectorTests
     {
         var results = Detect($"MAC: {mac} 입니다");
         Assert.Single(results);
-        Assert.Equal("aa:bb:cc:dd:ee:ff", results[0].Canonical.Value);
+        Assert.Equal("aa:bb:cc:dd:ee:ff", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 4. canonical 동일성: separator + case both converge ----
     [Fact]
     public void ColonAndHyphenAndCaseVariants_SameCanonicalValue()
     {
-        var colonLower = Detect("02:00:00:00:00:01")[0].Canonical;
-        var hyphenUpper = Detect("02-00-00-00-00-01")[0].Canonical;
-        var colonUpper = Detect("02:00:00:00:00:01".ToUpperInvariant())[0].Canonical;
+        var colonLower = CanonicalAssert.Present(Detect("02:00:00:00:00:01")[0]);
+        var hyphenUpper = CanonicalAssert.Present(Detect("02-00-00-00-00-01")[0]);
+        var colonUpper = CanonicalAssert.Present(Detect("02:00:00:00:00:01".ToUpperInvariant())[0]);
 
         Assert.Equal(colonLower, hyphenUpper);
         Assert.Equal(colonLower, colonUpper);
@@ -86,7 +86,7 @@ public class MacAddressDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(mac, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("02:00:00:00:00:01", results[0].Canonical.Value);
+        Assert.Equal("02:00:00:00:00:01", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 7. invalid hex rejected ----
@@ -180,7 +180,7 @@ public class MacAddressDetectorTests
         Assert.Single(phoneResults);
         Assert.Single(emailResults);
         Assert.Single(macResults);
-        Assert.Equal("02:00:00:00:00:01", macResults[0].Canonical.Value);
+        Assert.Equal("02:00:00:00:00:01", CanonicalAssert.Text(macResults[0]));
 
         var allSpans = new[] { phoneResults[0].Span, emailResults[0].Span, macResults[0].Span };
         for (int i = 0; i < allSpans.Length; i++)

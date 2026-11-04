@@ -74,7 +74,7 @@ public class EmailBoundaryTests
     {
         var results = Detect("문의: user@example.com 입니다");
         Assert.Single(results);
-        Assert.Equal("user@example.com", results[0].Canonical.Value);
+        Assert.Equal("user@example.com", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 7. parenthesized, exact span only ----

@@ -138,7 +138,7 @@ public class FilenameContextRegressionTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal("37.5665_lon=126.9780", rawText.Substring(span.Start, span.Length));
-        Assert.Equal("37.5665,126.978", results[0].Canonical.Value);
+        Assert.Equal("37.5665,126.978", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 7. phone in a full Windows path: value only ----
@@ -206,7 +206,7 @@ public class FilenameContextRegressionTests
         var results = DetectWith(new SecretDetector(), rawText);
 
         Assert.Single(results);
-        Assert.Equal("AbcDef123456789.txt", results[0].Canonical.Value); // over-protection, by design
+        Assert.Equal("AbcDef123456789.txt", CanonicalAssert.Text(results[0])); // over-protection, by design
     }
 
     // ---- 12. Phase 2O.1 hardening: IP value only, extension excluded ----

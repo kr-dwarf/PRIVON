@@ -111,7 +111,7 @@ public class ContextRiskAdjusterTests
 
         Assert.Equal(candidate.PiiType, result.PiiType);
         Assert.Equal(candidate.Span, result.Span);
-        Assert.Equal(candidate.Canonical, result.Canonical);
+        Assert.Equal(CanonicalAssert.Present(candidate), CanonicalAssert.Present(result));
         Assert.Equal(candidate.RiskLevel, result.RiskLevel);
         Assert.Equal(candidate.DetectorName, result.DetectorName);
         Assert.NotEqual(candidate.Confidence, result.Confidence); // the one field allowed to change
@@ -338,7 +338,7 @@ public class ContextRiskAdjusterTests
             {
                 Assert.Equal(candidates[i].Span, result[i].Span);
                 Assert.Equal(candidates[i].PiiType, result[i].PiiType);
-                Assert.Equal(candidates[i].Canonical, result[i].Canonical);
+                Assert.Equal(CanonicalAssert.Present(candidates[i]), CanonicalAssert.Present(result[i]));
                 Assert.Equal(candidates[i].RiskLevel, result[i].RiskLevel);
                 if (candidates[i].RiskLevel == RiskLevel.Level3)
                 {

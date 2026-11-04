@@ -249,7 +249,7 @@ public class ExceptionTrustedEvaluatorTests
         Assert.Equal(a.RiskLevel, result[0].Candidate.RiskLevel); // 22
         Assert.Equal(a.Confidence, result[0].Candidate.Confidence); // 23
         Assert.Equal(a.Span, result[0].Candidate.Span); // 24
-        Assert.Equal(a.Canonical, result[0].Candidate.Canonical); // 25
+        Assert.Equal(CanonicalAssert.Present(a), CanonicalAssert.Present(result[0].Candidate)); // 25
         Assert.Equal(a.DetectorName, result[0].Candidate.DetectorName); // 26
     }
 

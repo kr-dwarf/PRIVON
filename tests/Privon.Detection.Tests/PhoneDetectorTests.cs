@@ -43,7 +43,7 @@ public class PhoneDetectorTests
 
         Assert.Single(intlResults);
         Assert.Single(domResults);
-        Assert.Equal(domResults[0].Canonical, intlResults[0].Canonical);
+        Assert.Equal(CanonicalAssert.Present(domResults[0]), CanonicalAssert.Present(intlResults[0]));
     }
 
     // ---- 3. area codes ----
@@ -93,9 +93,9 @@ public class PhoneDetectorTests
     [Fact]
     public void DifferentFormatting_SameCanonicalValue()
     {
-        var a = Detect("010-1234-5678")[0].Canonical;
-        var b = Detect("010 1234 5678")[0].Canonical;
-        var c = Detect("01012345678")[0].Canonical;
+        var a = CanonicalAssert.Present(Detect("010-1234-5678")[0]);
+        var b = CanonicalAssert.Present(Detect("010 1234 5678")[0]);
+        var c = CanonicalAssert.Present(Detect("01012345678")[0]);
 
         Assert.Equal(a, b);
         Assert.Equal(b, c);
@@ -170,7 +170,7 @@ public class PhoneDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(fullwidthPhone, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("01012345678", results[0].Canonical.Value);
+        Assert.Equal("01012345678", CanonicalAssert.Text(results[0]));
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public class PhoneDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(zeroWidthPhone, rawText.Substring(span.Start, span.Length));
-        Assert.Equal("01012345678", results[0].Canonical.Value);
+        Assert.Equal("01012345678", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 14. empty / very long input never throws ----

@@ -130,9 +130,10 @@ public class CategoryPolicyEvaluatorTests
     }
 
     // ==================================================================
-    // Name/Address/Company -- no PiiType mapping exists; a Protect candidate of ANY currently-real
-    // PiiType is never affected by those 3 booleans (there is nothing for them to gate yet). No
-    // fabricated Name/Address/Company PiiType is used anywhere in this file.
+    // Name/Address/Company -- HISTORICAL v0.2.1 wording kept as evidence ("no PiiType mapping exists"). Since 0.4.0 Name and Address
+    // DO map to NameEnabled / AddressEnabled (see UsCategoryBoundaryTests for that behaviour); this test is still exactly right for
+    // what it uses: the Phone and Email candidates below are never affected by the Name / Address / Company booleans. No
+    // Name/Address/Company PiiType is used in THIS file.
     // ==================================================================
     [Fact]
     public void NameAddressCompanyToggles_HaveNoEffect_OnAnyCurrentlyRealPiiType()

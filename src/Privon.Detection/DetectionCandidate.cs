@@ -16,13 +16,30 @@ namespace Privon.Detection;
 /// rather than calling <c>Snapshot.Value.ToString()</c> (Phase 3A.4 STEP3.2 precedent).
 /// </summary>
 public sealed record DetectionCandidate(
-    PiiType PiiType,
-    RawSpan Span,
-    RiskLevel RiskLevel,
-    DetectionConfidence Confidence,
-    CanonicalValue Canonical,
-    string DetectorName)
+    PiiType PiiType,                                                 // (1)  UNCHANGED
+    RawSpan Span,                                                    // (2)  UNCHANGED
+    RiskLevel RiskLevel,                                             // (3)  UNCHANGED
+    DetectionConfidence Confidence,                                  // (4)  UNCHANGED
+    CanonicalValue? Canonical,                                       // (5)  TYPE WIDENED (§7.2)
+    string DetectorName,                                             // (6)  UNCHANGED
+
+    DetectorId DetectorId = default,                                 // (7)  NEW
+    ResolutionEvidence Evidence = ResolutionEvidence.NotModelled,    // (8)  NEW
+    int ResolutionRank = int.MaxValue,                               // (9)  NEW
+                                                                     //      == UnassignedRank;
+                                                                     //      a record primary-ctor
+                                                                     //      default cannot name a
+                                                                     //      member of its own type,
+                                                                     //      so the literal is used
+                                                                     //      and the named constant
+                                                                     //      below stays public.
+    AliasIdentity? AliasIdentity = null,                             // (10) NEW -- neutral (§22)
+    OwnerClaim OwnerClaim = OwnerClaim.NotApplicable,                // (11) NEW
+    NormativeFieldBag? AdditionalNormativeFields = null)             // (12) NEW -- §7.3
 {
+    /// <summary>§23.4 -- the ResolutionRank default for a candidate no detector stamped.</summary>
+    public const int UnassignedRank = int.MaxValue;
+
     public override string ToString() =>
         $"{nameof(DetectionCandidate)} {{ {nameof(PiiType)} = {PiiType}, {nameof(Span)} = {Span}, " +
         $"{nameof(RiskLevel)} = {RiskLevel}, {nameof(Confidence)} = {Confidence}, {nameof(DetectorName)} = {DetectorName} }}";

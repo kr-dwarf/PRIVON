@@ -25,5 +25,13 @@ public static class StorePurpose
     // (see UserExceptionEntry's own doc), never sharing ciphertext binding with either.
     public const string UserExceptions = "PRIVON.UserExceptions.v1";
 
+    // PRIVON 0.4.0 T-1 -- the per-country ON/OFF choice: its own file and its own AAD, so ciphertext produced for any other store (settings.bin
+    // included) fails authentication here and vice versa, and settings.bin / its legacy readers are never touched.
+    public const string CountrySettings = "PRIVON.CountrySettings.v1";
+
+    // PRIVON 0.4.0 P1 -- the explicit activation of a country pack: its own file and its own AAD, so ciphertext of the country choice (or any other store)
+    // fails authentication here and vice versa.
+    public const string CountryActivation = "PRIVON.CountryActivation.v1";
+
     public static byte[] ToAad(string purpose) => Encoding.UTF8.GetBytes(purpose);
 }

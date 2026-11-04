@@ -7,6 +7,11 @@ namespace Privon.App;
 /// <c>ClipboardPrivacyCoordinator.ProcessNotificationAsync</c>/<c>RunWorkerAsync</c> -- none of
 /// these are invented stages; each is named after the real source-level condition that produced it.
 ///
+/// PRIVON 0.4.0: <see cref="Success"/>, <see cref="WriteRejected"/>, <see cref="WriteSkippedUnreliableSequence"/> and <see cref="ProcessingException"/> are
+/// also the ways a USER DECISION on a pending item can end (<c>ClipboardDecisionActionResolver</c>), reported against the decision scope's generation
+/// so the opt-in status tracker sees the same terminal facts for the same attempt id. A decision that ends stale, partially, or without a write
+/// (BypassOnce) reports nothing.
+///
 /// Declared with <see cref="None"/> first so <c>default(ClipboardDiagnosticTerminalReason)</c> is
 /// never mistaken for a real terminal outcome -- the same discipline used throughout this codebase.
 /// </summary>
@@ -64,4 +69,12 @@ internal enum ClipboardDiagnosticTerminalReason
     /// already isolates this from ending the worker for future attempts; this value exists only so
     /// a manual-QA trace can see that it happened at all.</summary>
     ProcessingException,
+
+    /// <summary>
+    /// PRIVON 0.4.0 -- a USER DECISION ended with at least one pending item deliberately kept as the original (BypassOnce): the decision committed
+    /// and its one-revision pass was issued, with or without a rewrite of the other items. It states ONLY that the user chose to keep the original.
+    /// It is not a verified rewrite, not a claim that anything is protected, and not the consumption of the pass (nothing in the product performs
+    /// that evaluation). Appended last so every earlier value keeps its number.
+    /// </summary>
+    DecisionKeptOriginal,
 }

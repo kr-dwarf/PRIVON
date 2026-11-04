@@ -127,6 +127,28 @@ namespace Privon.App;
 /// external write (ERROR_BOUNDARY, above) -- never re-interpreted as success, never rolling back the
 /// scope's already-committed resolution state or minted grants.
 ///
+/// DECISION_TERMINAL_STATUS (PRIVON 0.4.0): the coordinator reports a pending decision as DecisionPending and then never hears of it again, so
+/// the opt-in <see cref="ClipboardProtectionStatusTracker"/> would keep describing a decision that is no longer pending. When this attempt
+/// ENDS with a fact the tracker already classifies, it is reported once through the SAME <see cref="IClipboardDiagnosticRecorder"/> event the
+/// coordinator uses (<see cref="ClipboardDiagnosticEvent.AttemptTerminal"/>), keyed by <see cref="ClipboardDecisionScope.Generation"/> -- which is the
+/// coordinator's own attempt id for the content this scope describes: a verified rewrite is Success, a rejected or unverified write is WriteRejected
+/// (an unreliable sequence is WriteSkippedUnreliableSequence) and an unexpected exception is ProcessingException (its type name only). Nothing is
+/// reported for a stale, partial, awaiting-confirmation or no-write (BypassOnce) outcome: the status then stays what it was, never Verified. The
+/// report is made only while the scope is still the ACTIVE one, a failing recorder is swallowed, and the default recorder does nothing.
+///
+/// PROMPT_FOREGROUND_CARVE_OUT (PRIVON 0.4.0, policy B, Controller-approved; the ONE exception to FRESH_TARGET below): the decision prompt is
+/// non-activating, so a mouse click leaves the supported app in the foreground and needs nothing special. A user who can only operate the prompt by
+/// ACTIVATING it (keyboard, screen reader) makes PRIVON's own process the foreground, which the fresh capture would reject as unsupported. The prompt
+/// therefore passes a <see cref="DecisionPromptForegroundContext"/> -- built fresh for that one press -- ONLY when the prompt window itself was the
+/// foreground window at the press, the foreground recorded when the decision was shown was a SUPPORTED Windows target, and the press has a
+/// <see cref="DecisionPromptAuthorityBasis"/>: either the application active just before the prompt's was that original target (it stands in), or a fresh
+/// Enter / Space addressed to the button raised the click (a MANUAL decision: it restores no target, claims none, and is not proof that a person pressed
+/// the key). The attempt then accepts the context if, additionally, (c) the FRESH capture is PRIVON's own process. Nothing else changes: the fresh
+/// capture still happens, a different app in the foreground is still refused, the Windows layer still verifies the foreground mechanically against the
+/// fresh capture before every read and write, and the revision, whole-plan and scope checks are unchanged. The composer verification is handed the
+/// supported target ONLY for the original-target basis; a manual decision hands it none. A Web target is never carved out, and this is not an approval to
+/// send and not a way around any other policy.
+///
 /// OUT OF SCOPE for this STEP (deliberately not implemented anywhere near this type): Send-intent
 /// interception, grant consumption/removal, the actual composer read-back itself (performed later,
 /// on user trigger, by <see cref="ClipboardComposerVerifier.VerifyAsync"/> -- this type only
@@ -144,6 +166,7 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
     private readonly ClipboardPrivacyProcessor _processor;
     private readonly IClipboardComposerVerificationHandoff _verificationHandoff;
     private readonly IWebClipboardAuthorizationSource? _webAuthorizationSource;
+    private readonly IClipboardDiagnosticRecorder _diagnostics;
 
     public ClipboardDecisionActionResolver(
         IClipboardOperationGate operationGate,
@@ -153,7 +176,8 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
         IClipboardWriteTransport writeTransport,
         ClipboardPrivacyProcessor processor,
         IClipboardComposerVerificationHandoff verificationHandoff,
-        IWebClipboardAuthorizationSource? webAuthorizationSource = null)
+        IWebClipboardAuthorizationSource? webAuthorizationSource = null,
+        IClipboardDiagnosticRecorder? diagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(operationGate);
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -173,6 +197,8 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
         // nothing, so every Web decision action fails closed to Stale() before Phase E ships a
         // concrete IWebClipboardAuthorizationSource. See ClipboardAuthorizationRouter's own doc.
         _webAuthorizationSource = webAuthorizationSource;
+        // DECISION_TERMINAL_STATUS -- optional, trailing, PRODUCTION_DEFAULT a recorder that does nothing: only the explicit protection-status opt-in passes one.
+        _diagnostics = diagnostics ?? NullClipboardDiagnosticRecorder.Instance;
     }
 
     /// <summary>
@@ -184,8 +210,12 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
     /// replacement text) lives only as a local variable of this one call and becomes unreachable
     /// the instant it returns.
     /// </summary>
+    public Task<ClipboardDecisionActionResult> ResolveAsync(
+        ClipboardDecisionScope scope, ClipboardDecisionItem item, ClipboardDecisionIntent intent) =>
+        ResolveAsync(scope, item, intent, promptContext: null);
+
     public async Task<ClipboardDecisionActionResult> ResolveAsync(
-        ClipboardDecisionScope scope, ClipboardDecisionItem item, ClipboardDecisionIntent intent)
+        ClipboardDecisionScope scope, ClipboardDecisionItem item, ClipboardDecisionIntent intent, DecisionPromptForegroundContext? promptContext)
     {
         ArgumentNullException.ThrowIfNull(scope);
 
@@ -207,7 +237,13 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             // verifier is NEVER passed in or reused here -- the router is asked again, fresh.
             var target = _targetCapture.Capture();
             var authorization = await ClipboardAuthorizationRouter.AuthorizeAsync(target, _webAuthorizationSource).ConfigureAwait(false);
-            if (authorization.Kind == ClipboardAuthorizationKind.Outside) return ClipboardDecisionActionResult.Stale();
+            ForegroundTargetSnapshot? handoffTarget = target;   // the target the composer verification is told about (none for a manual decision)
+            if (authorization.Kind == ClipboardAuthorizationKind.Outside)
+            {
+                // PROMPT_FOREGROUND_CARVE_OUT: see this type's class doc. Every condition below must hold; any other outside target stays Stale.
+                if (!TryAuthorizeFromOwnPrompt(promptContext, target, out authorization)) return ClipboardDecisionActionResult.Stale();
+                handoffTarget = promptContext!.Basis == DecisionPromptAuthorityBasis.PreviousAppWasOriginalTarget ? promptContext.OriginalTarget : null;
+            }
 
             IClipboardAuthorizationFreshness? freshness =
                 authorization.TryGetWeb(out _, out var webFreshness) ? webFreshness : null;
@@ -267,13 +303,19 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             {
                 if (!_lifecycle.IsActive(scope)) return ClipboardDecisionActionResult.Stale();
                 scope.CommitResolved(currentStamp);
-                return _lifecycle.IsActive(scope)
-                    ? ClipboardDecisionActionResult.Applied(clipboardMutated: false, scopeCommitted: true)
-                    : ClipboardDecisionActionResult.Stale();
+                if (!_lifecycle.IsActive(scope)) return ClipboardDecisionActionResult.Stale();
+
+                // DECISION_TERMINAL_STATUS -- every pending item was kept as the original: chosen and issued, NOT consumed, NOT protected.
+                ReportTerminal(scope, ClipboardDiagnosticTerminalReason.DecisionKeptOriginal);
+                return ClipboardDecisionActionResult.Applied(clipboardMutated: false, scopeCommitted: true);
             }
 
             // AB. WRITE_ELIGIBILITY
-            if (!snapshot.HasReliableSequence) return ClipboardDecisionActionResult.WriteFailed();
+            if (!snapshot.HasReliableSequence)
+            {
+                ReportTerminal(scope, ClipboardDiagnosticTerminalReason.WriteSkippedUnreliableSequence);
+                return ClipboardDecisionActionResult.WriteFailed();
+            }
 
             // AC. FINAL_PRE_WRITE_ACTIVE_CHECK
             if (!_lifecycle.IsActive(scope)) return ClipboardDecisionActionResult.Stale();
@@ -292,6 +334,7 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             // AE. WRITE_RESULT_MAPPING
             if (!ClipboardWriteResultClassifier.IsRewriteVerified(writeResult))
             {
+                ReportTerminal(scope, ClipboardDiagnosticTerminalReason.WriteRejected);
                 return writeResult.ClipboardMutated
                     ? ClipboardDecisionActionResult.MutatedUnverified()
                     : ClipboardDecisionActionResult.WriteFailed();
@@ -320,15 +363,22 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             // retry, no rollback of the already-committed scope/grants.
             if (_lifecycle.IsActive(scope))
             {
-                if (authorization.Kind != ClipboardAuthorizationKind.WebTarget)
-                    _ = _verificationHandoff.Publish(target, replacementText, scope.Generation);
+                if (authorization.Kind != ClipboardAuthorizationKind.WebTarget && handoffTarget is { } verifyAgainst)
+                    _ = _verificationHandoff.Publish(verifyAgainst, replacementText, scope.Generation);
+
+                // DECISION_TERMINAL_STATUS -- the rewrite was verified in place and committed. It is a Success only when nothing the user decided on was
+                // kept as the original: a kept item is still in the text, so that rewrite is not a protection of the whole.
+                ReportTerminal(scope, AnyItemKeptAsOriginal(scope)
+                    ? ClipboardDiagnosticTerminalReason.DecisionKeptOriginal
+                    : ClipboardDiagnosticTerminalReason.Success);
                 return ClipboardDecisionActionResult.Applied(clipboardMutated: true, scopeCommitted: true);
             }
 
             return ClipboardDecisionActionResult.Stale(clipboardMutated: true);
         }
-        catch
+        catch (Exception ex)
         {
+            ReportTerminal(scope, ClipboardDiagnosticTerminalReason.ProcessingException, ex.GetType().Name);
             return ClipboardDecisionActionResult.Failed(clipboardMutated);
         }
         finally
@@ -337,7 +387,94 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
         }
     }
 
-    // N/O/P. WHOLE_PLAN_MATCH: builds the exact set of (CanonicalValue, RiskLevel) identities the
+    /// <summary>
+    /// ONE_REVISION_PASS (PRIVON 0.4.0, D3A POL-L1-ONCE-R1/R2) -- the guarded product path that applies a scope's live one-revision passes
+    /// to the CURRENT clipboard text. It holds the shared operation gate for the whole attempt and mirrors <see cref="ResolveAsync"/>'s
+    /// own validation: the scope must still be the ACTIVE one and already committed; a fresh target is captured and authorized (outside =
+    /// no pass); the text is read fresh through the guarded transport; and only then does the processor evaluate it and spend a pass
+    /// (<see cref="ClipboardPrivacyProcessor.EvaluateOneRevisionPass"/>). The active check is repeated AFTER the evaluation -- the same
+    /// check-act-check linearization <see cref="ResolveAsync"/> uses -- and a scope superseded in the meantime yields
+    /// <see cref="ClipboardOneRevisionPassOutcome.Stale"/>, never a pass. Two concurrent calls are serialized by the gate and, beneath it, by the
+    /// compare-and-swap consumption: the pass can succeed at most once.
+    ///
+    /// This is NOT send-blocking and not a transmission guarantee (A-1): nothing in the product observes a send, so nothing calls this on a
+    /// send. It states only what the next evaluation of this text, under this revision, concludes. Nothing is written to the clipboard,
+    /// nothing is rewritten and nothing is persisted; an unexpected exception is reported as <see cref="ClipboardOneRevisionPassOutcome.Failed"/>
+    /// without any content and is never a pass.
+    /// </summary>
+    public async Task<ClipboardOneRevisionPassResult> EvaluateOneRevisionPassAsync(ClipboardDecisionScope scope)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+
+        await _operationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!_lifecycle.IsActive(scope)) return ClipboardOneRevisionPassResult.Stale();
+            if (!scope.Committed) return ClipboardOneRevisionPassResult.Stale();   // no grant exists before the commit
+
+            var target = _targetCapture.Capture();
+            var authorization = await ClipboardAuthorizationRouter.AuthorizeAsync(target, _webAuthorizationSource).ConfigureAwait(false);
+            if (authorization.Kind == ClipboardAuthorizationKind.Outside) return ClipboardOneRevisionPassResult.Stale();
+
+            IClipboardAuthorizationFreshness? freshness =
+                authorization.TryGetWeb(out _, out var webFreshness) ? webFreshness : null;
+
+            var readResult = await _readTransport.ReadTextSnapshotAsync(target, freshness).ConfigureAwait(false);
+            if (readResult.Outcome != ClipboardReadOutcome.Success) return ClipboardOneRevisionPassResult.Stale();
+            if (!_lifecycle.IsActive(scope)) return ClipboardOneRevisionPassResult.Stale();
+
+            var evaluation = _processor.EvaluateOneRevisionPass(target, readResult.Snapshot!.Value, scope);
+
+            // The linearization point: a pass consumed on a scope that was superseded meanwhile is withheld, not reported.
+            return _lifecycle.IsActive(scope)
+                ? ClipboardOneRevisionPassResult.Evaluated(evaluation)
+                : ClipboardOneRevisionPassResult.Stale();
+        }
+        catch
+        {
+            return ClipboardOneRevisionPassResult.Failed();
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private static bool AnyItemKeptAsOriginal(ClipboardDecisionScope scope) =>
+        scope.Items.Any(item => scope.GetChoice(item) == ClipboardRuntimeItemChoice.BypassOnce);
+
+    // DECISION_TERMINAL_STATUS: one terminal fact of this attempt, for the scope's own generation, and only while that scope is still the active one
+    // (a superseded scope belongs to older content; the newer attempt owns the status). Never throws: a recorder failure must not change the result.
+    private void ReportTerminal(ClipboardDecisionScope scope, ClipboardDiagnosticTerminalReason reason, string? exceptionTypeName = null)
+    {
+        try
+        {
+            if (!_lifecycle.IsActive(scope)) return;
+            _diagnostics.Record(ClipboardDiagnosticEvent.AttemptTerminal(scope.Generation, reason, exceptionTypeName));
+        }
+        catch
+        {
+            // SINK_FAILURE_ISOLATION -- same discipline as ClipboardPrivacyCoordinator.Diagnose.
+        }
+    }
+
+    // PROMPT_FOREGROUND_CARVE_OUT. True only when the press carried a context (the prompt was the foreground at the press and the press has a basis), the
+    // FRESH capture is PRIVON's own process, and the target recorded when the decision was shown is a supported WINDOWS target. Anything else -- including
+    // a Web target, an unresolved capture, or a capture of any other process -- is refused exactly as before. The basis only decides what the composer
+    // check is told afterwards; it never relaxes any of these conditions.
+    private static bool TryAuthorizeFromOwnPrompt(
+        DecisionPromptForegroundContext? promptContext, ForegroundTargetSnapshot freshTarget, out ClipboardAuthorization authorization)
+    {
+        authorization = ClipboardAuthorization.Outside;
+        if (promptContext is null) return false;
+        if (!freshTarget.IsResolved || freshTarget.ProcessId != (uint)Environment.ProcessId) return false;
+        if (TargetGate.Match(promptContext.OriginalTarget) is not { } supported) return false;
+
+        authorization = ClipboardAuthorization.ForWindows(supported);
+        return true;
+    }
+
+    // N/O/P. WHOLE_PLAN_MATCH: builds the exact set of (CanonicalValue, RiskLevel, DetectorId) identities the
     // fresh evaluation currently reports as NeedsDecision -- same identity/dedup semantics as
     // ClipboardPrivacyProcessor.BuildDecisionPlan (structural equality, no re-canonicalization) --
     // and requires it to be an EXACT set match against scope.Items (same count, no missing
@@ -354,7 +491,12 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             {
                 if (assignment.Decision.Disposition != CandidateDisposition.NeedsDecision) continue;
                 var candidate = assignment.Decision.Candidate.Candidate;
-                currentNeedsDecisionItems.Add(new ClipboardDecisionItem(candidate.Canonical, candidate.RiskLevel));
+                // D3B0-A A.9 §7.2 site 1 -- explicit PRESENT check before constructing a
+                // ClipboardDecisionItem, whose own Canonical stays NON-nullable. ABSENT is
+                // skipped rather than coerced: fail-closed means no decision item is fabricated
+                // for a candidate that carries no canonical value.
+                if (candidate.Canonical is { } needsDecisionCanonical)
+                    currentNeedsDecisionItems.Add(new ClipboardDecisionItem(needsDecisionCanonical, candidate.RiskLevel, candidate.DetectorId));
             }
         }
 
@@ -388,7 +530,9 @@ internal sealed class ClipboardDecisionActionResolver : IClipboardDecisionResolv
             }
 
             var candidate = decision.Candidate.Candidate;
-            var item = new ClipboardDecisionItem(candidate.Canonical, candidate.RiskLevel);
+            // §7.2 site 2 -- same explicit PRESENT check as site 1.
+            if (candidate.Canonical is not { } itemCanonical) continue;
+            var item = new ClipboardDecisionItem(itemCanonical, candidate.RiskLevel, candidate.DetectorId);
             var overlaidDisposition = scope.GetChoice(item) switch
             {
                 ClipboardRuntimeItemChoice.Protect => CandidateDisposition.Protect,

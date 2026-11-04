@@ -35,7 +35,7 @@ namespace Privon.App;
 /// this type now owns and disposes it (<see cref="_brandIcon"/>) exactly like every other
 /// disposable field below.
 ///
-/// Phase 0.2I adds exactly one more menu item -- a checkable "Windows 시작 시 자동 실행" toggle,
+/// Phase 0.2I adds exactly one more menu item -- a checkable "Launch at Windows Startup" toggle,
 /// placed above a separator from the pre-existing Exit item -- and nothing else; still no
 /// dashboard, no settings window.
 ///
@@ -45,7 +45,7 @@ namespace Privon.App;
 /// routes through the SAME <see cref="PrivonAppUiBridge"/>-owned dispatcher hand-off as every other
 /// tray command here.
 /// </summary>
-internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
+internal sealed class WinFormsTrayIconSurface : ITrayIconSurface, IProtectionStatusSurface, IUsReadinessSurface
 {
     private readonly Icon _brandIcon;
     private readonly NotifyIcon _icon;
@@ -53,7 +53,14 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
     private readonly ToolStripMenuItem _settingsItem;
     private readonly ToolStripMenuItem _autoStartItem;
     private readonly ToolStripMenuItem _exitItem;
+    private readonly ToolStripMenuItem _usReadinessItem;
+    private readonly ToolStripSeparator _usReadinessSeparator;
+    private string _usReadinessDetail = string.Empty;
     private bool _disposed;
+
+    // NotifyIcon has ONE balloon click event. It must reach ChromeReconnectNotificationClicked only when the balloon that was
+    // clicked is the Chrome reconnect one; a protection warning must never be read as "the user chose to reconnect Chrome".
+    private bool _lastBalloonIsChromeReconnect;
 
     public WinFormsTrayIconSurface()
     {
@@ -66,13 +73,23 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         // would flip the visual checkbox the instant the user clicks, before any registry attempt
         // ever ran -- exactly the "표시가 거짓으로 성공을 주장" failure mode the 0.2I contract
         // forbids.
-        _autoStartItem = new ToolStripMenuItem("Windows 시작 시 자동 실행") { CheckOnClick = false };
+        _autoStartItem = new ToolStripMenuItem("Launch at Windows Startup") { CheckOnClick = false };
         _autoStartItem.Click += (_, _) => AutoStartToggleRequested?.Invoke(this, EventArgs.Empty);
 
         _exitItem = new ToolStripMenuItem("Exit");
         _exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
+        // U.S. detector readiness (explicit opt-in only). Hidden until a presentation is set, so a shipped launch -- which never sets one -- shows
+        // exactly the menu it always did. Clicking it shows the longer detail once, as an INFO balloon the user asked for; it never touches the
+        // tooltip or the warning balloon, which belong to the protection status.
+        _usReadinessItem = new ToolStripMenuItem("") { Visible = false };
+        _usReadinessItem.Click += (_, _) => ShowUsReadinessDetail();
+        _usReadinessSeparator = new ToolStripSeparator { Visible = false };
+
         _menu = new ContextMenuStrip();
+        _menu.Opening += (_, _) => UsReadinessRefreshRequested?.Invoke(this, EventArgs.Empty);
+        _menu.Items.Add(_usReadinessItem);
+        _menu.Items.Add(_usReadinessSeparator);
         _menu.Items.Add(_settingsItem);
         _menu.Items.Add(_autoStartItem);
         _menu.Items.Add(new ToolStripSeparator());
@@ -83,7 +100,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _icon = new NotifyIcon
         {
             Icon = _brandIcon,
-            Text = "PRIVON — 실행 중",
+            Text = "PRIVON — Running",
             ContextMenuStrip = _menu,
             Visible = false,
         };
@@ -91,13 +108,17 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         // PRIVON 0.3.2 Gate 032-C2 -- the reconnect notification's click is the ONE authorized
         // trigger for ChromeReconnectNotificationClicked; NotifyIcon.BalloonTipClicked is the real
         // WinForms mechanism for that. No other NotifyIcon event is wired to it.
-        _icon.BalloonTipClicked += (_, _) => ChromeReconnectNotificationClicked?.Invoke(this, EventArgs.Empty);
+        _icon.BalloonTipClicked += (_, _) =>
+        {
+            if (_lastBalloonIsChromeReconnect) ChromeReconnectNotificationClicked?.Invoke(this, EventArgs.Empty);
+        };
     }
 
     public event EventHandler? ExitRequested;
     public event EventHandler? AutoStartToggleRequested;
     public event EventHandler? SettingsRequested;
     public event EventHandler? ChromeReconnectNotificationClicked;
+    public event EventHandler? UsReadinessRefreshRequested;
 
     public void Show()
     {
@@ -117,13 +138,53 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
     public void ShowChromeReconnectNotification()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _lastBalloonIsChromeReconnect = true;
         _icon.ShowBalloonTip(10000, "PRIVON", "Chrome connection needs updating. Open PRIVON to reconnect.", ToolTipIcon.Info);
+    }
+
+    // Protection status (every launch). The tooltip is bounded because
+    // NotifyIcon.Text throws above 63 characters. The warning uses the warning icon and is not clickable for any action.
+    public void SetProtectionStatus(ProtectionStatusPresentation presentation, bool notify)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(presentation);
+
+        string tooltip = presentation.Tooltip;
+        _icon.Text = tooltip.Length <= ProtectionStatusPresenter.MaxTooltipLength
+            ? tooltip
+            : tooltip[..ProtectionStatusPresenter.MaxTooltipLength];
+
+        if (notify)
+        {
+            _lastBalloonIsChromeReconnect = false;
+            _icon.ShowBalloonTip(10000, "PRIVON", presentation.Detail, ToolTipIcon.Warning);
+        }
     }
 
     /// <summary>Deterministic disposal -- sets <c>Visible = false</c> BEFORE disposing so the icon
     /// is removed from the shell rather than left as a stale "ghost" entry (a well-known
     /// <see cref="NotifyIcon"/> pitfall when a process exits without doing this). Idempotent; safe
     /// to call even if <see cref="Show"/> was never called.</summary>
+    // U.S. readiness line (explicit opt-in only; the shipped composition never calls this). Menu text only: no tooltip change, no balloon.
+    public void SetUsReadiness(UsReadinessPresentation presentation)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(presentation);
+
+        _usReadinessItem.Text = presentation.MenuText;
+        _usReadinessItem.ToolTipText = presentation.Detail;
+        _usReadinessDetail = presentation.Detail;
+        _usReadinessItem.Visible = true;
+        _usReadinessSeparator.Visible = true;
+    }
+
+    private void ShowUsReadinessDetail()
+    {
+        if (_disposed || _usReadinessDetail.Length == 0) return;
+        _lastBalloonIsChromeReconnect = false;
+        _icon.ShowBalloonTip(10000, "PRIVON", _usReadinessDetail, ToolTipIcon.Info);
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -136,5 +197,7 @@ internal sealed class WinFormsTrayIconSurface : ITrayIconSurface
         _settingsItem.Dispose();
         _autoStartItem.Dispose();
         _exitItem.Dispose();
+        _usReadinessItem.Dispose();
+        _usReadinessSeparator.Dispose();
     }
 }

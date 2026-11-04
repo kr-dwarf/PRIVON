@@ -22,7 +22,7 @@ public class SecretDetectorTests
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level3, results[0].RiskLevel);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal("synthetic_value_here", results[0].Canonical.Value);
+        Assert.Equal("synthetic_value_here", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 2. apiKey: (mixed case key, unquoted) ----
@@ -68,7 +68,7 @@ public class SecretDetectorTests
         var results = Detect("client_secret='synthetic_secret_here'");
         Assert.Single(results);
         Assert.Equal(DetectionConfidence.High, results[0].Confidence);
-        Assert.Equal("synthetic_secret_here", results[0].Canonical.Value);
+        Assert.Equal("synthetic_secret_here", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 7. password assignment ----
@@ -89,7 +89,7 @@ public class SecretDetectorTests
     {
         var results = Detect(rawText);
         Assert.Single(results);
-        Assert.Equal(expectedValue, results[0].Canonical.Value);
+        Assert.Equal(expectedValue, CanonicalAssert.Text(results[0]));
     }
 
     // ---- 11. Authorization: Bearer ----
@@ -170,15 +170,15 @@ public class SecretDetectorTests
     {
         var results = Detect("api_key=SynthEtic_MixedCase_Value123");
         Assert.Single(results);
-        Assert.Equal("SynthEtic_MixedCase_Value123", results[0].Canonical.Value);
+        Assert.Equal("SynthEtic_MixedCase_Value123", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 18. different-case secrets are NOT merged into the same canonical value ----
     [Fact]
     public void DifferentCaseSecrets_HaveDifferentCanonicalValues()
     {
-        var upper = Detect("api_key=Synthetic_Value_ABC123")[0].Canonical;
-        var lower = Detect("api_key=synthetic_value_abc123")[0].Canonical;
+        var upper = CanonicalAssert.Present(Detect("api_key=Synthetic_Value_ABC123")[0]);
+        var lower = CanonicalAssert.Present(Detect("api_key=synthetic_value_abc123")[0]);
 
         Assert.NotEqual(upper, lower);
     }
@@ -256,7 +256,7 @@ public class SecretDetectorTests
         var results = Detect("API_KEY=abcd********wxyz");
         Assert.Single(results);
         Assert.Equal(RiskLevel.Level3, results[0].RiskLevel);
-        Assert.Equal("abcd********wxyz", results[0].Canonical.Value);
+        Assert.Equal("abcd********wxyz", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 27. fully masked value -> deliberately NOT detected (no visible-character evidence
@@ -296,7 +296,7 @@ public class SecretDetectorTests
     {
         var results = Detect("token=AbcDef123456789.");
         Assert.Single(results);
-        Assert.Equal("AbcDef123456789.", results[0].Canonical.Value);
+        Assert.Equal("AbcDef123456789.", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 1b. quoted value: quotes excluded, internal trailing '.' preserved exactly ----
@@ -310,7 +310,7 @@ public class SecretDetectorTests
         Assert.Single(results);
         var span = results[0].Span;
         Assert.Equal(value, rawText.Substring(span.Start, span.Length));
-        Assert.Equal(value, results[0].Canonical.Value);
+        Assert.Equal(value, CanonicalAssert.Text(results[0]));
     }
 
     // ---- 1c. JWT-like value: internal dots all preserved ----
@@ -319,7 +319,7 @@ public class SecretDetectorTests
     {
         var results = Detect("token=aaa.bbb.ccc");
         Assert.Single(results);
-        Assert.Equal("aaa.bbb.ccc", results[0].Canonical.Value);
+        Assert.Equal("aaa.bbb.ccc", CanonicalAssert.Text(results[0]));
     }
 
     // ---- 1d. trailing semicolon boundary still excludes the delimiter, not value characters ----
@@ -379,8 +379,8 @@ public class SecretDetectorTests
     public void CanonicalValue_DoesNotMergeDifferentRawValues_DueToZeroWidthNormalization()
     {
         var zeroWidthSpace = ((char)0x200B).ToString();
-        var withoutZeroWidth = Detect("API_KEY=\"Abcd1234\"")[0].Canonical;
-        var withZeroWidth = Detect($"API_KEY=\"Abcd{zeroWidthSpace}1234\"")[0].Canonical;
+        var withoutZeroWidth = CanonicalAssert.Present(Detect("API_KEY=\"Abcd1234\"")[0]);
+        var withZeroWidth = CanonicalAssert.Present(Detect($"API_KEY=\"Abcd{zeroWidthSpace}1234\"")[0]);
 
         Assert.NotEqual(withoutZeroWidth, withZeroWidth);
         Assert.Equal("Abcd1234", withoutZeroWidth.Value);
@@ -412,7 +412,7 @@ public class SecretDetectorTests
         Assert.Single(cardResults);
         Assert.Single(accountResults);
         Assert.Single(secretResults);
-        Assert.Equal(secretValue, secretResults[0].Canonical.Value);
+        Assert.Equal(secretValue, CanonicalAssert.Text(secretResults[0]));
 
         var allSpans = new[]
         {

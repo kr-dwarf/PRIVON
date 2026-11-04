@@ -31,6 +31,14 @@ internal interface ISettingsSurface
     /// <see cref="PhoneToggleRequested"/>.</summary>
     event EventHandler<bool>? EmailToggleRequested;
 
+    /// <summary>
+    /// PRIVON 0.4.0 T-1 -- raised ONLY by a real user input on the United States ON/OFF control (the bool is the state the user just chose), and only
+    /// while the surface shows that control, which it does only for a state that offers it (<see cref="SettingsViewState.UnitedStatesChoice"/>).
+    /// Never raised by <see cref="RenderState"/>, by window initialisation, or by any programmatic change of the control. That this event came from a
+    /// user input is a property of the surface, not a cryptographic proof of the person's intent.
+    /// </summary>
+    event EventHandler<bool>? UnitedStatesToggleRequested;
+
     /// <summary>Raised when the user confirms "Reset protection scope."</summary>
     event EventHandler? ResetProtectionScopeRequested;
 

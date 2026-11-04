@@ -41,6 +41,16 @@ public class ClipboardDecisionActionResolverTests
     {
         public string Name => "ThrowingDetector";
         public PiiType PiiType => PiiType.Secret;
+        // D3B0-A A.9 §6 -- the three new abstract IDetector members. Synthetic identity:
+        // NOT one of the nine frozen D2.2 contract IDs, and a rank outside the frozen
+        // 10..360 band so it can never collide with a registered detector. Ready, because
+        // this double is a pipeline INPUT and is never registered in a DetectorRegistry.
+        public DetectorId Id { get; } = DetectorId.Create("test.app_resolver_throwing");
+
+        public int ResolutionRank => 900001;
+
+        public DetectorReadinessState Readiness => DetectorReadinessState.Ready;
+
         public IReadOnlyList<DetectionCandidate> Detect(DetectionContext context) =>
             throw new InvalidOperationException("synthetic detector failure for ClipboardDecisionActionResolver test");
     }
@@ -48,20 +58,31 @@ public class ClipboardDecisionActionResolverTests
     private static ClipboardTextSnapshot Snapshot(string text, uint sequence = 1, bool reliable = true) =>
         new(SequenceNumber: sequence, HasReliableSequence: reliable, Text: text);
 
-    private static CanonicalValue DiscoverCanonical(string rawText, PiiType expectedType, RiskLevel expectedLevel)
+    private static DetectionCandidate DiscoverCandidate(string rawText, PiiType expectedType, RiskLevel expectedLevel)
     {
         var probe = DetectionPipeline.CreateDefault().Detect(rawText);
         var candidate = Assert.Single(probe.Candidates);
         Assert.Equal(expectedType, candidate.PiiType);
         Assert.Equal(expectedLevel, candidate.RiskLevel);
-        return candidate.Canonical;
+        return candidate;
     }
 
-    private static ClipboardDecisionItem MakeLevel1Item(string text = Level1Text) =>
-        new(DiscoverCanonical(text, PiiType.GpsCoordinate, RiskLevel.Level1), RiskLevel.Level1);
+    private static CanonicalValue DiscoverCanonical(string rawText, PiiType expectedType, RiskLevel expectedLevel) =>
+        CanonicalAssert.Present(DiscoverCandidate(rawText, expectedType, expectedLevel));
 
-    private static ClipboardDecisionItem MakeLevel3Item(string text = Level3Text) =>
-        new(DiscoverCanonical(text, PiiType.ResidentRegistrationNumber, RiskLevel.Level3), RiskLevel.Level3);
+    // The item carries the detector id the REAL detector stamped, exactly as ClipboardPrivacyProcessor builds it (0.4.0: a grant is bound
+    // to {revision, detectorId, canonical}).
+    private static ClipboardDecisionItem MakeLevel1Item(string text = Level1Text)
+    {
+        var candidate = DiscoverCandidate(text, PiiType.GpsCoordinate, RiskLevel.Level1);
+        return new(CanonicalAssert.Present(candidate), RiskLevel.Level1, candidate.DetectorId);
+    }
+
+    private static ClipboardDecisionItem MakeLevel3Item(string text = Level3Text)
+    {
+        var candidate = DiscoverCandidate(text, PiiType.ResidentRegistrationNumber, RiskLevel.Level3);
+        return new(CanonicalAssert.Present(candidate), RiskLevel.Level3, candidate.DetectorId);
+    }
 
     private static ClipboardDecisionScope CreateScope(string sourceText, params ClipboardDecisionItem[] items) =>
         CreateScope(sourceText, generation: 0, items);
@@ -279,7 +300,7 @@ public class ClipboardDecisionActionResolverTests
             exceptions: [new AmbiguousExceptionValue(PiiType.GpsCoordinate, level1Canonical)]);
         var (resolver, _, _, readTransport, _, _) = CreateResolver(new FakeTrustExceptionProvider(trustSnapshot));
 
-        var level1Item = new ClipboardDecisionItem(level1Canonical, RiskLevel.Level1);
+        var level1Item = new ClipboardDecisionItem(level1Canonical, RiskLevel.Level1, MakeLevel1Item().DetectorId);
         var level3Item = MakeLevel3Item(Level3Text);
         var combinedText = $"{Level1Text} {Level3Text}";
         var scope = CreateScope(combinedText, level1Item, level3Item);
@@ -296,7 +317,7 @@ public class ClipboardDecisionActionResolverTests
     {
         var (resolver, _, _, readTransport, _, _) = CreateResolver();
         var canonical = DiscoverCanonical(Level3Text, PiiType.ResidentRegistrationNumber, RiskLevel.Level3);
-        var mismatchedItem = new ClipboardDecisionItem(canonical, RiskLevel.Level1); // wrong RiskLevel, on purpose
+        var mismatchedItem = new ClipboardDecisionItem(canonical, RiskLevel.Level1, MakeLevel3Item().DetectorId); // wrong RiskLevel, on purpose
         var scope = CreateScope(Level3Text, mismatchedItem);
         SetSuccessfulRead(readTransport, Level3Text);
 
@@ -315,7 +336,7 @@ public class ClipboardDecisionActionResolverTests
             exceptions: [new AmbiguousExceptionValue(PiiType.GpsCoordinate, level1Canonical)]);
         var (resolver, _, _, readTransport, _, _) = CreateResolver(new FakeTrustExceptionProvider(trustSnapshot));
 
-        var level1Item = new ClipboardDecisionItem(level1Canonical, RiskLevel.Level1);
+        var level1Item = new ClipboardDecisionItem(level1Canonical, RiskLevel.Level1, MakeLevel1Item().DetectorId);
         var scope = CreateScope(Level1Text, level1Item);
         SetSuccessfulRead(readTransport, Level1Text);
 
@@ -391,7 +412,7 @@ public class ClipboardDecisionActionResolverTests
         Assert.False(result.ClipboardMutated);
         Assert.True(result.ScopeCommitted);
         Assert.Equal(0, writeTransport.CallCount);
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.DetectorId, item.Canonical));
     }
 
     // ---- 3. Level3 first BypassOnce -> AwaitingSecondConfirmation, no write/grant/commit ----
@@ -431,7 +452,7 @@ public class ClipboardDecisionActionResolverTests
         Assert.Equal(ClipboardDecisionActionOutcome.Applied, second.Outcome);
         Assert.False(second.ClipboardMutated);
         Assert.True(second.ScopeCommitted);
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, item.DetectorId, item.Canonical));
     }
 
     // ---- 5. a notification between the two Level3 clicks -> the second click is Stale ----
@@ -496,7 +517,7 @@ public class ClipboardDecisionActionResolverTests
         Assert.False(scope.Committed);
         Assert.Equal(ClipboardRuntimeItemChoice.BypassOnce, scope.GetChoice(level1Item));
         Assert.Equal(ClipboardRuntimeItemChoice.Unresolved, scope.GetChoice(level3Item));
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, level1Item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, level1Item.DetectorId, level1Item.Canonical));
     }
 
     // ---- 9. choice mutation followed by lifecycle invalidation BEFORE the post-mutation check
@@ -547,7 +568,7 @@ public class ClipboardDecisionActionResolverTests
 
         Assert.Equal(ClipboardDecisionActionOutcome.Stale, result.Outcome);
         Assert.False(scope.Committed);
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, item.DetectorId, item.Canonical));
     }
 
     // ==================================================================
@@ -578,8 +599,8 @@ public class ClipboardDecisionActionResolverTests
         Assert.False(final.ClipboardMutated);
         Assert.True(final.ScopeCommitted);
         Assert.Equal(0, writeTransport.CallCount);
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, level1Item.Canonical));
-        Assert.True(scope.HasBypassGrant(scope.InitialStamp, level3Item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, level1Item.DetectorId, level1Item.Canonical));
+        Assert.True(scope.HasBypassGrant(scope.InitialStamp, level3Item.DetectorId, level3Item.Canonical));
     }
 
     // ---- 2. runtime Bypass but an existing BASE Protect candidate is present in the same text ->
@@ -605,7 +626,7 @@ public class ClipboardDecisionActionResolverTests
         Assert.Equal(1, writeTransport.CallCount);
         // grant #6: no pre-write grant exists -- the runtime-Bypass item's grant is bound to the
         // post-write revision, never the scope's own InitialStamp.
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, level3Item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, level3Item.DetectorId, level3Item.Canonical));
     }
 
     // ---- 3. all Protect -> aliased replacement, write once, committed, zero bypass grants ----
@@ -623,7 +644,7 @@ public class ClipboardDecisionActionResolverTests
         Assert.Equal(ClipboardDecisionActionOutcome.Applied, result.Outcome);
         Assert.Equal(1, writeTransport.CallCount);
         Assert.NotEqual(Level1Text, writeTransport.ReceivedReplacementTexts[0]);
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, item.Canonical));
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, item.DetectorId, item.Canonical));
     }
 
     // ---- 4. mixed runtime Protect + Bypass -> Protect aliased, Bypass raw remains, post-write
@@ -657,7 +678,7 @@ public class ClipboardDecisionActionResolverTests
         var replacement = writeTransport.ReceivedReplacementTexts[0];
         Assert.Contains(Level3Text, replacement); // final Bypass -> left raw
         Assert.DoesNotContain("126.9780", replacement); // final Protect -> aliased away
-        Assert.False(scope.HasBypassGrant(scope.InitialStamp, level3Item.Canonical)); // grant #5/#6
+        Assert.False(scope.HasBypassGrant(scope.InitialStamp, level3Item.DetectorId, level3Item.Canonical)); // grant #5/#6
     }
 
     // ---- 7. unreliable sequence + a required Protect -> WriteFailed, no write, no grant ----
@@ -1422,7 +1443,10 @@ public class ClipboardDecisionActionResolverTests
 
         // Gate 031F5C -- one field added: the optional-trailing IWebClipboardAuthorizationSource?
         // dependency (see the Phase 3C STEP34 precedent asserted below for the same discipline).
-        Assert.Equal(8, fields.Length);
+        // PRIVON 0.4.0 DECISION_TERMINAL_STATUS -- one field added: the optional-trailing
+        // IClipboardDiagnosticRecorder (the coordinator's own existing event seam), so a decision's terminal
+        // fact can reach the opt-in protection-status tracker.
+        Assert.Equal(9, fields.Length);
 
         var forbiddenTypeNames = new HashSet<string>
         {
@@ -1460,6 +1484,11 @@ public class ClipboardDecisionActionResolverTests
         // Gate 031F5C -- the one new dependency THIS gate is allowed to add: the optional Web
         // authorization source, matching the coordinator's own identical widening.
         Assert.Contains(fields, f => f.FieldType == typeof(IWebClipboardAuthorizationSource));
+
+        // PRIVON 0.4.0 -- the one new dependency THIS change is allowed to add: the existing diagnostic seam, nothing wider
+        // (no tracker type, no status type, no text-bearing value).
+        Assert.Contains(fields, f => f.FieldType == typeof(IClipboardDiagnosticRecorder));
+        Assert.DoesNotContain(fields, f => f.FieldType == typeof(ClipboardProtectionStatusTracker));
     }
 
     [Theory]

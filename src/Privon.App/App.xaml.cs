@@ -75,7 +75,7 @@ public partial class App : System.Windows.Application
 
         _singleInstanceGuard = guard;
 
-        var composition = new PrivonAppComposition();
+        var composition = PrivonAppComposition.CreateProduction();
         composition.Start();
 
         PrivonAppUiBridge uiBridge;

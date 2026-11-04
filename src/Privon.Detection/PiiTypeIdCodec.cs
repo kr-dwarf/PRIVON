@@ -41,6 +41,19 @@ public static class PiiTypeIdCodec
         PiiType.IpAddress => "IpAddress",
         PiiType.MacAddress => "MacAddress",
         PiiType.GpsCoordinate => "GpsCoordinate",
+        // ---- appended by D3B0 (§4.2). The nine above are byte-frozen and untouched. ----
+        PiiType.Name => "Name",
+        PiiType.Address => "Address",
+        PiiType.UsSsn => "UsSsn",
+        PiiType.UsItin => "UsItin",
+        PiiType.UsAtin => "UsAtin",
+        PiiType.UsMbi => "UsMbi",
+        PiiType.UsPassport => "UsPassport",
+        PiiType.UsANumber => "UsANumber",
+        PiiType.UsI94 => "UsI94",
+        PiiType.UsSevis => "UsSevis",
+        PiiType.UsDriverStateId => "UsDriverStateId",
+        PiiType.BankAccount => "BankAccount",
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "No stable persisted ID is defined for this PiiType."),
     };
 
@@ -62,6 +75,19 @@ public static class PiiTypeIdCodec
             case "IpAddress": type = PiiType.IpAddress; return true;
             case "MacAddress": type = PiiType.MacAddress; return true;
             case "GpsCoordinate": type = PiiType.GpsCoordinate; return true;
+            // ---- appended by D3B0 (§4.2). The nine above are byte-frozen and untouched. ----
+            case "Name": type = PiiType.Name; return true;
+            case "Address": type = PiiType.Address; return true;
+            case "UsSsn": type = PiiType.UsSsn; return true;
+            case "UsItin": type = PiiType.UsItin; return true;
+            case "UsAtin": type = PiiType.UsAtin; return true;
+            case "UsMbi": type = PiiType.UsMbi; return true;
+            case "UsPassport": type = PiiType.UsPassport; return true;
+            case "UsANumber": type = PiiType.UsANumber; return true;
+            case "UsI94": type = PiiType.UsI94; return true;
+            case "UsSevis": type = PiiType.UsSevis; return true;
+            case "UsDriverStateId": type = PiiType.UsDriverStateId; return true;
+            case "BankAccount": type = PiiType.BankAccount; return true;
             default: type = default; return false;
         }
     }

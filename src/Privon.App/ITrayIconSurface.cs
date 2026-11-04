@@ -9,7 +9,7 @@ namespace Privon.App;
 /// remains manual release QA (Phase 3C STEP40 instruction).
 ///
 /// Phase 0.2I extends this surface with exactly the one opt-in control the AUTO-START CONTRACT
-/// needs -- a single checkable "Windows 시작 시 자동 실행" menu item -- still no dashboard, no
+/// needs -- a single checkable "Launch at Windows Startup" menu item -- still no dashboard, no
 /// settings window, no protection-category toggles (those remain explicitly out of scope for
 /// 0.2I, deferred to a future 0.2.1 settings surface).
 ///

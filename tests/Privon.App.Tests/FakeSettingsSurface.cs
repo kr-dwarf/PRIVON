@@ -21,6 +21,7 @@ internal sealed class FakeSettingsSurface : ISettingsSurface
     public event EventHandler? Closed;
     public event EventHandler<bool>? PhoneToggleRequested;
     public event EventHandler<bool>? EmailToggleRequested;
+    public event EventHandler<bool>? UnitedStatesToggleRequested;
     public event EventHandler? ResetProtectionScopeRequested;
     public event EventHandler<AddExceptionRequest>? AddExceptionRequested;
     public event EventHandler<UserExceptionValue>? DeleteExceptionRequested;
@@ -52,6 +53,10 @@ internal sealed class FakeSettingsSurface : ISettingsSurface
     public void RaisePhoneToggleRequested(bool desired) => PhoneToggleRequested?.Invoke(this, desired);
 
     public void RaiseEmailToggleRequested(bool desired) => EmailToggleRequested?.Invoke(this, desired);
+
+    public void RaiseUnitedStatesToggleRequested(bool desired) => UnitedStatesToggleRequested?.Invoke(this, desired);
+
+    public int UnitedStatesToggleSubscriberCount => UnitedStatesToggleRequested?.GetInvocationList().Length ?? 0;
 
     public void RaiseResetProtectionScopeRequested() => ResetProtectionScopeRequested?.Invoke(this, EventArgs.Empty);
 

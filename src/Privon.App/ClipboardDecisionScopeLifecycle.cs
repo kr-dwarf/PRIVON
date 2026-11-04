@@ -64,22 +64,39 @@ namespace Privon.App;
 /// already-abandoned one -- every one of these is a NO-OP here instead.
 /// </summary>
 internal sealed class ClipboardDecisionScopeLifecycle :
-    IClipboardNotificationLifecycle, IClipboardDecisionScopeLifecycle, IClipboardGenerationSnapshot
+    IClipboardNotificationLifecycle, IClipboardDecisionScopeLifecycle, IClipboardGenerationSnapshot, IClipboardDecisionScopeEndNotifier
 {
     private readonly object _gate = new();
     private long _generation;
     private ClipboardDecisionScope? _activeScope;
     private ClipboardEvaluationState _evaluationState;
 
+    /// <summary>See <see cref="IClipboardDecisionScopeEndNotifier.ActiveScopeEnded"/>. Raised strictly OUTSIDE <see cref="_gate"/>, so the critical
+    /// sections below keep exactly the shape this type's class doc proves.</summary>
+    public event EventHandler<ClipboardDecisionScope>? ActiveScopeEnded;
+
     public long AdvanceOnClipboardNotification()
     {
+        long generation;
+        ClipboardDecisionScope? dropped;
         lock (_gate)
         {
             _generation++;
+            dropped = _activeScope;
             _activeScope = null;
             _evaluationState = ClipboardEvaluationState.NotEvaluated;
-            return _generation;
+            generation = _generation;
         }
+        RaiseActiveScopeEnded(dropped);
+        return generation;
+    }
+
+    // Called on the clipboard owner thread / the session-lock thread: a subscriber only hands off, and nothing it throws may reach this caller.
+    private void RaiseActiveScopeEnded(ClipboardDecisionScope? dropped)
+    {
+        if (dropped is null) return;
+        try { ActiveScopeEnded?.Invoke(this, dropped); }
+        catch (Exception) { }
     }
 
     /// <summary>
@@ -204,11 +221,14 @@ internal sealed class ClipboardDecisionScopeLifecycle :
 
     public void Reset()
     {
+        ClipboardDecisionScope? dropped;
         lock (_gate)
         {
             _generation++;
+            dropped = _activeScope;
             _activeScope = null;
             _evaluationState = ClipboardEvaluationState.NotEvaluated;
         }
+        RaiseActiveScopeEnded(dropped);
     }
 }

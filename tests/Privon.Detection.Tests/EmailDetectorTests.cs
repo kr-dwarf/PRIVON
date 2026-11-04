@@ -33,7 +33,7 @@ public class EmailDetectorTests
     {
         var results = Detect($"이메일 주소는 {email} 입니다.");
         Assert.Single(results);
-        Assert.Equal(email, results[0].Canonical.Value);
+        Assert.Equal(email, CanonicalAssert.Text(results[0]));
     }
 
     // ---- 3. plus addressing ----
@@ -58,8 +58,8 @@ public class EmailDetectorTests
     [Fact]
     public void CaseDifference_SameCanonicalValue()
     {
-        var upper = Detect("Test.User@Example.COM")[0].Canonical;
-        var lower = Detect("test.user@example.com")[0].Canonical;
+        var upper = CanonicalAssert.Present(Detect("Test.User@Example.COM")[0]);
+        var lower = CanonicalAssert.Present(Detect("test.user@example.com")[0]);
 
         Assert.Equal(lower, upper);
         Assert.Equal("test.user@example.com", upper.Value);
@@ -69,8 +69,8 @@ public class EmailDetectorTests
     [Fact]
     public void DifferentLocalPartDots_DifferentCanonicalValue()
     {
-        var withDot = Detect("test.user@example.com")[0].Canonical;
-        var withoutDot = Detect("testuser@example.com")[0].Canonical;
+        var withDot = CanonicalAssert.Present(Detect("test.user@example.com")[0]);
+        var withoutDot = CanonicalAssert.Present(Detect("testuser@example.com")[0]);
 
         Assert.NotEqual(withDot, withoutDot);
     }
@@ -137,10 +137,10 @@ public class EmailDetectorTests
     [Fact]
     public void ObfuscatedForm_CanonicalizesLikePlainForm()
     {
-        var plain = Detect("user@example.com")[0].Canonical;
-        var atMarker = Detect("user(at)example.com")[0].Canonical;
-        var dotMarker = Detect("user@example(dot)com")[0].Canonical;
-        var both = Detect("user (at) example (dot) com")[0].Canonical;
+        var plain = CanonicalAssert.Present(Detect("user@example.com")[0]);
+        var atMarker = CanonicalAssert.Present(Detect("user(at)example.com")[0]);
+        var dotMarker = CanonicalAssert.Present(Detect("user@example(dot)com")[0]);
+        var both = CanonicalAssert.Present(Detect("user (at) example (dot) com")[0]);
 
         Assert.Equal(plain, atMarker);
         Assert.Equal(plain, dotMarker);

@@ -1,3 +1,5 @@
+using Privon.Windows;
+
 namespace Privon.App;
 
 /// <summary>
@@ -69,25 +71,30 @@ namespace Privon.App;
 /// </summary>
 internal sealed class DecisionPromptCoordinator : IDisposable
 {
-    internal const string NeutralFailureMessage = "처리할 수 없습니다. 다시 복사해 주세요.";
+    internal const string NeutralFailureMessage = "Could not process this. Please copy again.";
 
     private readonly ClipboardDecisionSessionPublisher _sessionPublisher;
     private readonly IClipboardDecisionScopeLifecycle _lifecycle;
     private readonly IClipboardDecisionResolver _resolver;
     private readonly IDispatcherScheduler _scheduler;
     private readonly Func<IDecisionPromptSurface> _surfaceFactory;
+    private readonly IForegroundTargetCapture? _targetCapture;
     private readonly object _gate = new();
 
     private bool _started;
     private bool _disposed;
     private IDecisionPromptSurface? _currentSurface;
+    private ClipboardDecisionScope? _currentScope;     // the scope _currentSurface was shown for
+    private bool _attemptRunning;                      // a Protect All attempt for _currentSurface is in flight
+    private IClipboardDecisionScopeEndNotifier? _endNotifier;
 
     public DecisionPromptCoordinator(
         ClipboardDecisionSessionPublisher sessionPublisher,
         IClipboardDecisionScopeLifecycle lifecycle,
         IClipboardDecisionResolver resolver,
         IDispatcherScheduler scheduler,
-        Func<IDecisionPromptSurface> surfaceFactory)
+        Func<IDecisionPromptSurface> surfaceFactory,
+        IForegroundTargetCapture? targetCapture = null)
     {
         ArgumentNullException.ThrowIfNull(sessionPublisher);
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -99,6 +106,7 @@ internal sealed class DecisionPromptCoordinator : IDisposable
         _resolver = resolver;
         _scheduler = scheduler;
         _surfaceFactory = surfaceFactory;
+        _targetCapture = targetCapture;
     }
 
     /// <summary>Single-use, matching this codebase's established <c>Start</c> precedent -- a
@@ -114,6 +122,37 @@ internal sealed class DecisionPromptCoordinator : IDisposable
         }
 
         _sessionPublisher.ScopePublished += OnScopePublished;
+
+        // OPTIONAL: a lifecycle that cannot say when a decision ends (a hand-written fake) simply leaves the prompt to the existing replace / dispose / user-close paths
+        if (_lifecycle is IClipboardDecisionScopeEndNotifier notifier)
+        {
+            _endNotifier = notifier;
+            notifier.ActiveScopeEnded += OnActiveScopeEnded;
+        }
+    }
+
+    // SCOPE_ENDED (PRIVON 0.4.0): runs on the thread that dropped the scope (the clipboard owner thread / the session-lock thread) -- it only hands off.
+    private void OnActiveScopeEnded(object? sender, ClipboardDecisionScope ended)
+    {
+        _scheduler.Post(() => CloseThePromptOfAnEndedDecision(ended));
+    }
+
+    // A decision prompt says "personal information was detected, press to protect": true only while the decision is alive. When the scope it was shown for
+    // has ended it is closed -- unless a Protect All attempt for it is still running, because that attempt's failure message is the answer the user is waiting
+    // for and a prompt that vanishes under a press looks like a success. Closing resolves nothing, writes nothing and claims nothing; a prompt that belongs to a
+    // different (newer) scope is never touched.
+    private void CloseThePromptOfAnEndedDecision(ClipboardDecisionScope ended)
+    {
+        IDecisionPromptSurface? surface;
+        lock (_gate)
+        {
+            if (_disposed || _currentSurface is null) return;
+            if (!ReferenceEquals(_currentScope, ended) || _attemptRunning) return;
+            surface = _currentSurface;
+        }
+
+        if (_lifecycle.IsActive(ended)) return;
+        surface.Close();
     }
 
     // PUBLICATION_THREAD: runs on whatever thread raised ScopePublished (the coordinator's own
@@ -121,12 +160,29 @@ internal sealed class DecisionPromptCoordinator : IDisposable
     // schedules the dispatcher hand-off.
     private void OnScopePublished(object? sender, ClipboardDecisionScope scope)
     {
-        _scheduler.Post(() => HandleScopeOnDispatcher(scope));
+        var original = CaptureSupportedTarget();
+        _scheduler.Post(() => HandleScopeOnDispatcher(scope, original));
+    }
+
+    // The foreground target at the moment the decision is shown, kept ONLY if it is a supported Windows target (nothing else is ever remembered).
+    // No capture configured, a failing capture or an unsupported target all mean "none": the prompt then never carries the foreground carve-out.
+    private ForegroundTargetSnapshot? CaptureSupportedTarget()
+    {
+        if (_targetCapture is null) return null;
+        try
+        {
+            var snapshot = _targetCapture.Capture();
+            return TargetGate.IsSupportedTarget(snapshot) ? snapshot : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // WPF_DISPATCHER_BOUNDARY: runs on the dispatcher thread in production (synchronously, in a
     // test fake scheduler). ACTIVE_SCOPE_RECHECK + ONE_CURRENT_PROMPT are both implemented here.
-    private void HandleScopeOnDispatcher(ClipboardDecisionScope scope)
+    private void HandleScopeOnDispatcher(ClipboardDecisionScope scope, ForegroundTargetSnapshot? originalTarget)
     {
         lock (_gate)
         {
@@ -140,6 +196,8 @@ internal sealed class DecisionPromptCoordinator : IDisposable
         {
             previous = _currentSurface;
             _currentSurface = null;
+            _currentScope = null;
+            _attemptRunning = false;
         }
         previous?.Close();
 
@@ -155,9 +213,17 @@ internal sealed class DecisionPromptCoordinator : IDisposable
             // exercise).
             if (protectAllInFlight) return;
             protectAllInFlight = true;
+            lock (_gate)
+            {
+                if (ReferenceEquals(_currentSurface, surface)) _attemptRunning = true;
+            }
+
+            // Read NOW, synchronously, on the UI thread, and used for THIS press only: how the prompt says this very press came about. The context is
+            // built here, handed to one resolve and kept in no field.
+            var promptContext = originalTarget is { } original ? BuildPromptContext(original, SafeCaptureInvocation(surface)) : null;
 
             surface.DisableProtectAction();
-            _ = RunProtectAllAsync(scope, surface);
+            _ = RunProtectAllAsync(scope, surface, promptContext);
         };
 
         lock (_gate)
@@ -168,6 +234,8 @@ internal sealed class DecisionPromptCoordinator : IDisposable
                 return;
             }
             _currentSurface = surface;
+            _currentScope = scope;
+            _attemptRunning = false;
         }
 
         surface.Show();
@@ -180,6 +248,8 @@ internal sealed class DecisionPromptCoordinator : IDisposable
             if (ReferenceEquals(_currentSurface, surface))
             {
                 _currentSurface = null;
+                _currentScope = null;
+                _attemptRunning = false;
             }
         }
     }
@@ -208,13 +278,39 @@ internal sealed class DecisionPromptCoordinator : IDisposable
     // (from the resolver, or from anything else in this method) must never become an unobserved
     // Task exception. Every path this catch reaches produces, at most, the same neutral
     // NeutralFailureMessage -- never re-interpreted as success, never any content-bearing detail.
-    private async Task RunProtectAllAsync(ClipboardDecisionScope scope, IDecisionPromptSurface surface)
+    private static DecisionPromptInvocation SafeCaptureInvocation(IDecisionPromptSurface surface)
+    {
+        try { return surface.CaptureInvocation(); } catch { return default; }
+    }
+
+    // POLICY B (PRIVON 0.4.0, Controller-approved). A press made while PRIVON's own prompt is the foreground carries a permission only when:
+    //   (1) the prompt itself is the foreground window now, AND the foreground recorded when the decision was shown was a supported target (the caller);
+    //   (2) either the application active immediately before the prompt's application became active IS that original target (same process) -- the original
+    //       target stands in -- or the click was raised inside a fresh Enter / Space addressed to the button itself -- a MANUAL decision that restores
+    //       and claims no target (a synthesized key is indistinguishable, and nothing here says otherwise).
+    // Anything else -- a UIA Invoke while another application was the foreground, an unknown or unresolvable predecessor, the Alt+Tab switcher without a
+    // key -- gets no context and is refused exactly as before. The asynchronous foreground history is deliberately not consulted: it is neither ordered
+    // nor complete enough to authorize anything.
+    private static DecisionPromptForegroundContext? BuildPromptContext(ForegroundTargetSnapshot original, DecisionPromptInvocation invocation)
+    {
+        if (!invocation.IsForeground) return null;
+
+        if (invocation.PreviousActiveProcessId != 0 && invocation.PreviousActiveProcessId == original.ProcessId)
+            return new DecisionPromptForegroundContext(original, DecisionPromptAuthorityBasis.PreviousAppWasOriginalTarget);
+
+        if (invocation.ByKeyboard)
+            return new DecisionPromptForegroundContext(original, DecisionPromptAuthorityBasis.ManualKeyboardDecision);
+
+        return null;
+    }
+
+    private async Task RunProtectAllAsync(ClipboardDecisionScope scope, IDecisionPromptSurface surface, DecisionPromptForegroundContext? promptContext)
     {
         try
         {
             foreach (var item in scope.Items)
             {
-                var result = await _resolver.ResolveAsync(scope, item, ClipboardDecisionIntent.Protect).ConfigureAwait(false);
+                var result = await _resolver.ResolveAsync(scope, item, ClipboardDecisionIntent.Protect, promptContext).ConfigureAwait(false);
 
                 if (result.Outcome == ClipboardDecisionActionOutcome.Applied && result.ScopeCommitted)
                 {
@@ -246,6 +342,14 @@ internal sealed class DecisionPromptCoordinator : IDisposable
         {
             _scheduler.Post(() => surface.ShowNeutralFailure(NeutralFailureMessage));
         }
+        finally
+        {
+            // the attempt is over (its Close / failure message is already queued ahead of anything a later scope end can queue)
+            lock (_gate)
+            {
+                if (ReferenceEquals(_currentSurface, surface)) _attemptRunning = false;
+            }
+        }
     }
 
     /// <summary>Idempotent. Unsubscribes from <see cref="ClipboardDecisionSessionPublisher.ScopePublished"/>
@@ -260,6 +364,7 @@ internal sealed class DecisionPromptCoordinator : IDisposable
         }
 
         _sessionPublisher.ScopePublished -= OnScopePublished;
+        if (_endNotifier is not null) _endNotifier.ActiveScopeEnded -= OnActiveScopeEnded;
 
         IDecisionPromptSurface? surface;
         lock (_gate)

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Read-only reuse of the shared D2.2 primitives (FieldBinder, NormalizedView, RawSpan). Nothing here
+         registers a detector, touches DetectorRegistry, or changes the production pipeline. -->
+    <ProjectReference Include="..\Privon.Detection\Privon.Detection.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets the isolated product-integration candidate read a candidate's canonical value to build the product
+         CanonicalValue, without widening any public API of this experiment module. -->
+    <InternalsVisibleTo Include="Privon.UsProductIntegration" />
+  </ItemGroup>
+
+</Project>

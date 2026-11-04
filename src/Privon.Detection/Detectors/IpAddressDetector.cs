@@ -33,6 +33,19 @@ public sealed class IpAddressDetector : IDetector
 {
     public string Name => "IpAddressDetector";
     public PiiType PiiType => global::Privon.Detection.PiiType.IpAddress;
+    // ---- D3B0-A A.9 §5.2 frozen legacy identity/rank/evidence. Literals, never
+    // ---- inferred from the class name, registration order, or list position
+    // ---- (DETECTOR_IDENTITY_IS_EXPLICIT, §5.1). Detect(), the regex, confidence
+    // ---- computation, the canonicalizer and span arithmetic are UNCHANGED.
+    public DetectorId Id { get; } = DetectorId.Create("global.ip");
+
+    public int ResolutionRank => 210;
+
+    // §16.2: this detector depends on no authority snapshot, so it is literally
+    // Ready. Stated rather than defaulted precisely because a default of Ready
+    // would be the fail-open direction (§6).
+    public DetectorReadinessState Readiness => DetectorReadinessState.Ready;
+
 
     // Candidate shape only (not a full 0-255 range check): 1-3 digits, no ambiguous leading
     // zero (rejects octal-looking forms like "010"). Per design preference, range validation
@@ -109,7 +122,14 @@ public sealed class IpAddressDetector : IDetector
             RiskLevel.Level2,
             DetectionConfidence.High,
             canonical,
-            Name));
+            Name,
+            // DETECTOR_MUST_STAMP_IDENTITY (§7.1): this detector passes its own DetectorId,
+            // ResolutionRank and ResolutionEvidence EXPLICITLY. The parameter defaults exist
+            // for harness-injected candidates only; a production detector left on defaults
+            // is a contract violation.
+            DetectorId: Id,
+            Evidence: ResolutionEvidence.NotModelled,
+            ResolutionRank: ResolutionRank));
     }
 
     private static bool TryParseIpv4(string text, out IPAddress? address)

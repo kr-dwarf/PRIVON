@@ -1,0 +1,58 @@
+{
+  "artifactVersion": "us-authority/2026-11-02.1",
+  "generatedBy": "AuthorityData/build_authority.py",
+  "note": "Public reference data read once (read-only) on retrievedOn. Never fetched at runtime. Test fixtures (the four-entry D3A subsets) are NOT part of this artifact.",
+  "snapshots": [
+    {
+      "id": "us.npa",
+      "usedBy": [
+        "us.phone"
+      ],
+      "version": "1",
+      "sourceUrl": "https://reports.nanpa.com/public/npa_report.csv",
+      "catalogUrl": "https://nanpa.com/reports/npa-reports",
+      "retrievedOn": "2026-11-02",
+      "sourceFile": "source/nanpa-npa_report.csv",
+      "sourceBytes": 117380,
+      "sourceSha256": "c99da9f54f43894823dad359795eaf05d222830cc5512770ddc4637dcde20245",
+      "normalizedFile": "normalized/us-npa.txt",
+      "normalizedRecordCount": 378,
+      "normalizedSha256": "d38fee57b62e8f87fbed01965801575856eed3fea7751ef3ffd302411856848c",
+      "selectionRule": "COUNTRY=US and USE=G (general purpose / geographic) and IN_SERVICE=Y; the jurisdiction is the file's LOCATION (50 states, DC, AS, CNMI, GU, PR, VI). Non-geographic codes, codes not yet in service and every non-US NANP country are excluded."
+    },
+    {
+      "id": "usps.suffix",
+      "usedBy": [
+        "us.address"
+      ],
+      "version": "1",
+      "sourceUrl": "https://pe.usps.com/text/pub28/28apc_002.htm",
+      "catalogUrl": null,
+      "retrievedOn": "2026-11-02",
+      "sourceFile": "source/usps-pub28-appendix-c1-street-suffix.htm",
+      "sourceBytes": 168833,
+      "sourceSha256": "ea88c395c7b9cd00e8a53c03a84eb9be93054440ddc41c8013d33a232507c162",
+      "normalizedFile": "normalized/usps-suffix.txt",
+      "normalizedRecordCount": 549,
+      "normalizedSha256": "a4e031653e74de4e7c98acc215107bc6d11f16b527c140df709f8bd2c6d743b0",
+      "selectionRule": "Union of the three columns of the C1 table (primary street suffix name, commonly used suffix or abbreviation, Postal Service standard abbreviation), upper-case, distinct."
+    },
+    {
+      "id": "usps.state",
+      "usedBy": [
+        "us.address"
+      ],
+      "version": "1",
+      "sourceUrl": "https://pe.usps.com/text/pub28/28apb.htm",
+      "catalogUrl": null,
+      "retrievedOn": "2026-11-02",
+      "sourceFile": "source/usps-pub28-appendix-b-state-possession.htm",
+      "sourceBytes": 67502,
+      "sourceSha256": "3078cf36901feff11e838facf2561d125762f1c5cdf23e249d847fcaa76d2752",
+      "normalizedFile": "normalized/usps-state.txt",
+      "normalizedRecordCount": 59,
+      "normalizedSha256": "bed45633dff20b979dec923894e19a07c9eb09107cc01c4ccbd9917e1b14926d",
+      "selectionRule": "Abbreviation column of the Appendix B 'State/Possession' table, as published (59 codes, including the three freely associated states USPS lists there). The 'Military State' table is excluded."
+    }
+  ]
+}

@@ -27,6 +27,8 @@ internal sealed class ThreadAffineDecisionPromptSurface : DispatcherObject, IDec
     public string? LastNeutralFailureMessage { get; private set; }
     public bool IsClosed { get; private set; }
 
+    public DecisionPromptInvocation CaptureInvocation() => default;
+
     /// <summary>Set the first time any member below is entered from a thread other than this
     /// object's own owning Dispatcher thread. <see langword="null"/> means every touch so far was
     /// correctly on-thread.</summary>
